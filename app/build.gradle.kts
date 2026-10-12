@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -20,8 +22,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with the debug key so the release APK installs without a keystore setup.
-            signingConfig = signingConfigs.getByName("debug")
+            // Left unsigned on purpose: `signedRelease` signs it with the release key and the
+            // key-rotation lineage from the original (debug) key. See CLAUDE.md, "Release signing".
+            signingConfig = null
         }
     }
     compileOptions {
@@ -61,4 +64,48 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
 
     implementation("io.coil-kt:coil-compose:2.6.0")
+}
+
+// ----- Release signing -----------------------------------------------------------------------
+// v1.0.0 and v1.1.0 were signed with the original debug key. Releases are now signed with the
+// release key *and* a lineage proving the old key handed over to it (APK Signature Scheme v3
+// rotation). Android 9+ verifies the new key; older devices verify the old key through the v1/v2
+// signatures. That's why both keystores are needed for every release. Secrets live in the
+// git-ignored keystore.properties.
+val signingProps = Properties().apply {
+    rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+
+tasks.register<Exec>("signedRelease") {
+    group = "build"
+    description = "Builds the release APK and signs it with the release key plus the key-rotation lineage."
+    dependsOn("assembleRelease")
+
+    val unsigned = layout.buildDirectory.file("outputs/apk/release/app-release-unsigned.apk").get().asFile
+    val out = layout.buildDirectory.file("outputs/apk/release/Lifeline-v${android.defaultConfig.versionName}.apk").get().asFile
+    val windows = System.getProperty("os.name").startsWith("Windows")
+    val apksigner = File(android.sdkDirectory, "build-tools/${android.buildToolsVersion}/apksigner" + if (windows) ".bat" else "")
+    fun prop(key: String) = signingProps.getProperty(key, "")
+
+    doFirst {
+        check(!signingProps.isEmpty) { "keystore.properties is missing; release signing isn't set up on this machine." }
+        check(File(prop("lineageFile")).exists()) { "Key-rotation lineage not found at ${prop("lineageFile")}." }
+    }
+    environment("LIFELINE_LEGACY_PASS", prop("legacyStorePassword"))
+    environment("LIFELINE_LEGACY_KEY_PASS", prop("legacyKeyPassword"))
+    environment("LIFELINE_STORE_PASS", prop("storePassword"))
+    environment("LIFELINE_KEY_PASS", prop("keyPassword"))
+    commandLine(
+        apksigner, "sign",
+        "--ks", prop("legacyStoreFile"), "--ks-key-alias", prop("legacyKeyAlias"),
+        "--ks-pass", "env:LIFELINE_LEGACY_PASS", "--key-pass", "env:LIFELINE_LEGACY_KEY_PASS",
+        "--next-signer",
+        "--ks", prop("storeFile"), "--ks-key-alias", prop("keyAlias"),
+        "--ks-pass", "env:LIFELINE_STORE_PASS", "--key-pass", "env:LIFELINE_KEY_PASS",
+        "--lineage", prop("lineageFile"),
+        "--rotation-min-sdk-version", "28",
+        "--out", out.path,
+        unsigned.path,
+    )
+    doLast { println("Signed release: ${out.path}") }
 }

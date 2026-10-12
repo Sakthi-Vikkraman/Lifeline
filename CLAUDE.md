@@ -20,12 +20,22 @@ Native Android app: Kotlin, Jetpack Compose, Room. Android only, by the user's c
 ```
 .\gradlew.bat assembleDebug      # → app\build\outputs\apk\debug\app-debug.apk
 .\gradlew.bat installDebug       # install on a connected device/emulator (adb)
-.\gradlew.bat assembleRelease    # signed with the debug key, so it installs without keystore setup
+.\gradlew.bat signedRelease      # → app\build\outputs\apk\release\Lifeline-v<versionName>.apk (needs keystore.properties)
 ```
+
+Publish only the `signedRelease` output. Plain `assembleRelease` produces an unsigned APK.
 
 There is no test suite. The SDK path lives in `local.properties` (git-ignored). An emulator AVD `Medium_Phone_API_35` exists at `%LOCALAPPDATA%\Android\Sdk`.
 
 Dependency versions are pinned to what's already in the local Gradle cache (AGP 8.7.3, Gradle 8.9, Kotlin/Compose compiler 2.0.21, KSP 2.0.21-1.0.28, Compose BOM 2024.06.00, Room 2.6.1, Coil 2.6.0). Only the `android-34` platform is installed, so `compileSdk`/`targetSdk` are 34. Bumping either needs SDK/cache downloads.
+
+## Release signing
+
+v1.0.0 and v1.1.0 shipped signed with this PC's original debug key (cert SHA-256 `11e5…0bcc`). The release key (`0c13…42a1`, alias `lifeline`) took over through APK Signature Scheme v3 key rotation.
+
+- `signedRelease` (in `app/build.gradle.kts`) runs `apksigner sign` with the old key, then `--next-signer` with the new key, plus `--lineage` and `--rotation-min-sdk-version 28`. Android 9+ verifies the new key through v3; Android 8.x verifies the old key through v2. **Every release needs both keystores and the lineage.** Never sign a release with only one key, or existing installs can't update.
+- The secrets live outside the repo, in `%USERPROFILE%\.lifeline-signing\`: `lifeline-release.jks`, `legacy-debug.keystore` (a copy of the old debug key), `lineage.bin`, and `keystore.properties.backup`. The git-ignored `keystore.properties` at the repo root points to them. Losing either key means existing users can never update again, so the folder must stay backed up.
+- To check a build: `apksigner verify --print-certs --min-sdk-version 26 --max-sdk-version 26 <apk>` should show `11e5…`, and the same check at 28 should show `0c13…`.
 
 ## Architecture
 
