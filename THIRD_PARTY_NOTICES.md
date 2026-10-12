@@ -1,6 +1,6 @@
 # Third-party notices
 
-Lifeline includes the components below. Each one is licensed under its own terms, and the [Lifeline license](LICENSE) does not restrict the rights those terms grant.
+Lifeline includes the components below. Each one is licensed under its own terms. Lifeline itself is licensed under the [Apache License 2.0](LICENSE).
 
 | Component | License |
 |---|---|

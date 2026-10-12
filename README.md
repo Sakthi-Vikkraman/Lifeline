@@ -6,7 +6,7 @@
 
 An Android app that keeps your day honest. An alarm rings at the top of every hour and won't stop until you log what you're actually doing: snap a photo or type it, then tag it as productivity or entertainment.
 
-[**Download the latest APK**](https://github.com/Sakthi-Vikkraman/Lifeline/releases/latest) · [Report a bug](https://github.com/Sakthi-Vikkraman/Lifeline/issues/new) · [License](LICENSE)
+[**Download the latest APK**](https://github.com/Sakthi-Vikkraman/Lifeline/releases/latest) · [Report a bug](https://github.com/Sakthi-Vikkraman/Lifeline/issues/new) · [Apache-2.0 License](LICENSE)
 
 </div>
 
@@ -78,14 +78,12 @@ Bug reports, ideas and fixes are welcome.
 - **Found a bug?** [Open an issue](https://github.com/Sakthi-Vikkraman/Lifeline/issues/new). Include your phone model, Android version, what you expected and what happened. Screenshots help.
 - **Want to fix something?** Fork the repo, make your change on a branch, and open a pull request against `main`. Keep each PR focused on one fix or feature, and describe how you tested it.
 
-Under the [license](LICENSE), forks may only be used to prepare pull requests to this repository. By submitting a contribution, you agree it can be used as part of Lifeline (see Section 4 of the license).
+Contributions are accepted under the Apache License 2.0, the same license as the project (see Section 5 of the license).
 
 ## License
 
-Lifeline is **source-available, not open source.** © 2026 Sakthi Vikkraman R. All rights reserved.
+Copyright 2026 Sakthi Vikkraman R. Licensed under the [Apache License, Version 2.0](LICENSE).
 
-You **may** read the code, install official releases for personal use, open issues, and submit pull requests to improve this repository.
+You're free to use, study, modify and share the code under the license's terms: keep the copyright and [NOTICE](NOTICE), and state your changes. The license doesn't grant rights to the **Lifeline** name or logo, so modified versions should use a different name.
 
-You **may not** copy, redistribute, or republish the code or app, publish modified versions, use it commercially, or use it as a basis to recreate a similar app.
-
-See [LICENSE](LICENSE) for the full terms and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled third-party components.
+Bundled third-party components keep their own licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
