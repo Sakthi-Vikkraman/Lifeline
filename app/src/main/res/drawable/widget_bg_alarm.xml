@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unanswered alarm: blaze glow from the top -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient android:angle="270" android:startColor="#FF5A1E0E" android:centerColor="#FF1A0F0C" android:endColor="#FF0B0B0C" />
+    <stroke android:width="2dp" android:color="#FFFF4D1A" />
+    <corners android:radius="22dp" />
+</shape>

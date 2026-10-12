@@ -44,30 +44,31 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.lifeline.app.data.AppDatabase
-import com.lifeline.app.data.DayCount
+import com.lifeline.app.data.DaySummary
 import com.lifeline.app.data.Entry
+import com.lifeline.app.data.HourKind
+import com.lifeline.app.data.HourStat
 import com.lifeline.app.data.Photos
 import com.lifeline.app.data.Prefs
-import com.lifeline.app.data.Tag
+import com.lifeline.app.data.Stats
+import com.lifeline.app.data.WeekReport
 import com.lifeline.app.ui.theme.Kicker
 import com.lifeline.app.ui.theme.Lx
 import com.lifeline.app.ui.theme.color
 import com.lifeline.app.ui.theme.display
 import com.lifeline.app.ui.theme.label
+import com.lifeline.app.widget.Widgets
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-private const val HEADER_ITEMS = 3 // day header, stats, split bar
-
-private enum class HourState { PAST, MISSED, NOW, FUTURE }
-
-/** Ticks once a minute so NOW / MISSED markers roll over without a restart. */
+/** Ticks every 30 s so NOW / MISSED markers roll over without a restart. */
 @Composable
 fun rememberNow(): LocalDateTime {
     var now by remember { mutableStateOf(LocalDateTime.now()) }
@@ -75,19 +76,7 @@ fun rememberNow(): LocalDateTime {
     return now
 }
 
-/** Consecutive days, ending today (or yesterday if today has no logs yet), where productivity beat entertainment. */
-fun winStreak(counts: List<DayCount>, today: LocalDate): Int {
-    val byDay = counts.associateBy { it.date }
-    var d = if (byDay.containsKey(today.toString())) today else today.minusDays(1)
-    var streak = 0
-    while (true) {
-        val c = byDay[d.toString()] ?: break
-        if (c.productive <= c.entertainment) break
-        streak++
-        d = d.minusDays(1)
-    }
-    return streak
-}
+private enum class Banner { PLAN, REVIEW, REPORT }
 
 @Composable
 fun DashboardScreen(
@@ -95,26 +84,48 @@ fun DashboardScreen(
     onDateChange: (LocalDate) -> Unit,
     onLog: (LocalDate, Int) -> Unit,
     onPhoto: (String) -> Unit,
+    onPlan: (LocalDate) -> Unit,
+    onReview: (LocalDate) -> Unit,
+    onReport: (LocalDate) -> Unit,
     contentPadding: PaddingValues,
 ) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.get(context).entries() }
-    val settings by Prefs.get(context).settings.collectAsState()
+    val prefs = remember { Prefs.get(context) }
+    val settings by prefs.settings.collectAsState()
     val now = rememberNow()
     val today = now.toLocalDate()
-    val entries by remember(date) { dao.observeDay(date.toString()) }.collectAsState(initial = emptyList())
-    val history by remember(today) { dao.observeDayCounts(today.minusDays(366).toString(), today.toString()) }.collectAsState(initial = emptyList())
+    val weekStart = WeekReport.weekStart(date)
+    val from = minOf(weekStart, today.minusDays(120)).toString()
+    val to = maxOf(weekStart.plusDays(6), today).toString()
+    val entries by remember(from, to) { dao.observeBetween(from, to) }.collectAsState(initial = emptyList())
+    val plans by remember(from, to) { dao.observePlansBetween(from, to) }.collectAsState(initial = emptyList())
+    val review by remember(date) { dao.observeReview(date.toString()) }.collectAsState(initial = null)
 
-    val byHour = entries.groupBy { it.hour }
-    val hours = (settings.activeHours() + byHour.keys).distinct().sortedBy { settings.dayOrder(it) }
-    val productive = entries.count { it.tag == Tag.PRODUCTIVITY }
-    val entertainment = entries.size - productive
+    val day = remember(entries, plans, settings, now, date) { Stats.summarize(date, entries, plans, settings, now, prefs.trackingSince) }
+    val weekLost = remember(entries, plans, settings, now, weekStart) {
+        Stats.summarizeRange(weekStart, minOf(weekStart.plusDays(6), today), entries, plans, settings, now, prefs.trackingSince).sumOf { it.lost }
+    }
+    val streak = remember(entries, plans, settings, now) {
+        Stats.winStreak(Stats.summarizeRange(today.minusDays(120), today, entries, plans, settings, now, prefs.trackingSince), today)
+    }
+
+    val banners = buildList {
+        if (date == today) {
+            val last = settings.activeHours().lastOrNull()
+            if (plans.none { it.date == date.toString() } && last != null && settings.dayOrder(now.hour) <= settings.dayOrder(last)) add(Banner.PLAN)
+            val reviewTime = if (settings.startHour <= settings.endHour) now.hour >= settings.endHour else now.hour == last
+            if (reviewTime && review == null) add(Banner.REVIEW)
+            if (today.dayOfWeek == DayOfWeek.SUNDAY || today.dayOfWeek == DayOfWeek.MONDAY) add(Banner.REPORT)
+        }
+    }
+    val headerCount = 4 + banners.size + 1 + (if (review != null) 1 else 0)
 
     // Open on the current hour instead of the top of the day.
     val listState = rememberLazyListState()
-    val nowIndex = if (date == today) hours.indexOf(now.hour) else -1
+    val nowIndex = if (date == today) day.hours.indexOfFirst { it.hour == now.hour } else -1
     LaunchedEffect(date, nowIndex >= 0) {
-        if (nowIndex >= 0) listState.scrollToItem(maxOf(nowIndex + HEADER_ITEMS - 2, 0))
+        if (nowIndex >= 0) listState.scrollToItem(maxOf(nowIndex + headerCount - 2, 0))
     }
 
     LazyColumn(
@@ -122,28 +133,33 @@ fun DashboardScreen(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = contentPadding.calculateTopPadding() + 8.dp, bottom = contentPadding.calculateBottomPadding() + 96.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        item {
-            DayHeader(date, today, onDateChange)
-        }
+        item { DayHeader(date, today, onDateChange) }
+        item { GoalCard(day.productive, settings.dailyGoal) }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatTile("Logs", "${entries.size}", Modifier.weight(1f))
-                StatTile("Productive", "$productive", Modifier.weight(1f), Lx.Volt)
-                StatTile("Entertain", "$entertainment", Modifier.weight(1f), Lx.Blaze)
-                StatTile("Streak", "${winStreak(history, today)}", Modifier.weight(1f))
+                StatTile("Productive", "${day.productive}H", Modifier.weight(1f), Lx.Volt)
+                StatTile("Lost", "${day.lost}H", Modifier.weight(1f), Lx.Blaze)
+                StatTile("Plan kept", day.planScore?.let { "$it%" } ?: "—", Modifier.weight(1f))
+                StatTile("Streak", "$streak", Modifier.weight(1f))
             }
         }
-        item {
-            SplitBar(productive, entertainment)
-        }
-        items(hours, key = { it }) { hour ->
-            val list = byHour[hour].orEmpty()
-            val state = when {
-                date < today || (date == today && hour < now.hour) -> if (list.isEmpty() && settings.inWindow(hour)) HourState.MISSED else HourState.PAST
-                date == today && hour == now.hour -> HourState.NOW
-                else -> HourState.FUTURE
+        item { SplitBar(day) }
+        banners.forEach { b ->
+            item {
+                when (b) {
+                    Banner.PLAN -> ActionBanner("NO PLAN YET", "PLAN TODAY →", Lx.Volt) { onPlan(today) }
+                    Banner.REVIEW -> ActionBanner("DAY'S DONE", "NIGHT REVIEW →", Lx.Volt) { onReview(today) }
+                    // Sunday: this week's card. Monday: the week that just ended.
+                    Banner.REPORT -> ActionBanner("THE WEEK IS GRADED", "REPORT CARD →", Lx.Text) {
+                        onReport(WeekReport.weekStart(if (today.dayOfWeek == DayOfWeek.MONDAY) today.minusDays(1) else today))
+                    }
+                }
             }
-            HourRow(hour, state, list, onLog = { onLog(date, hour) }, onPhoto = onPhoto)
+        }
+        item { LostCard(weekLost, if (weekStart == WeekReport.weekStart(today)) "THIS WEEK" else "WEEK OF ${weekStart.format(DateTimeFormatter.ofPattern("d MMM")).uppercase()}") }
+        review?.let { r -> item { ReviewCard(r) } }
+        items(day.hours, key = { it.hour }) { h ->
+            HourRow(h, onLog = { onLog(date, h.hour) }, onPhoto = onPhoto)
         }
     }
 }
@@ -165,68 +181,122 @@ private fun DayHeader(date: LocalDate, today: LocalDate, onDateChange: (LocalDat
     }
 }
 
+/** Daily goal as a rep counter: one pip per productive hour. */
 @Composable
-private fun SplitBar(productive: Int, entertainment: Int) {
-    val total = productive + entertainment
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(top = 6.dp, bottom = 10.dp)
-            .height(8.dp)
-            .clip(RoundedCornerShape(99.dp))
-            .background(Lx.Surface2),
+private fun GoalCard(productive: Int, goal: Int) {
+    val done = productive >= goal
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Lx.Surface)
+            .border(if (done) 2.dp else 1.dp, if (done) Lx.Volt else Lx.Line, RoundedCornerShape(14.dp)).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        if (total > 0) {
-            if (productive > 0) Box(Modifier.weight(productive.toFloat()).fillMaxHeight().background(Lx.Volt))
-            if (entertainment > 0) Box(Modifier.weight(entertainment.toFloat()).fillMaxHeight().background(Lx.Blaze))
+        Row(verticalAlignment = Alignment.Bottom) {
+            Column(Modifier.weight(1f)) {
+                Text(if (done) "DAILY GOAL · CRUSHED" else "DAILY GOAL", style = Kicker.copy(color = if (done) Lx.Volt else Lx.Muted))
+                Text(if (done) "ALL REPS DONE" else "${goal - productive} REPS TO GO", style = display(22.sp))
+            }
+            Text("$productive", style = display(46.sp, Lx.Volt))
+            Text(" / $goal", style = display(26.sp, Lx.Muted), modifier = Modifier.padding(bottom = 6.dp))
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            repeat(goal) { i ->
+                Box(Modifier.weight(1f).height(10.dp).clip(RoundedCornerShape(3.dp)).background(if (i < productive) Lx.Volt else Lx.Surface2))
+            }
+        }
+        if (productive > goal) Text("+${productive - goal} BONUS", style = Kicker.copy(color = Lx.Volt))
     }
 }
 
 @Composable
-private fun HourRow(hour: Int, state: HourState, entries: List<Entry>, onLog: () -> Unit, onPhoto: (String) -> Unit) {
+private fun LostCard(lost: Int, label: String) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Lx.Blaze.copy(alpha = 0.10f))
+            .border(1.dp, Lx.Blaze.copy(alpha = 0.6f), RoundedCornerShape(14.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("$label · HOURS LOST", style = Kicker.copy(color = Lx.Blaze))
+            Text(Stats.lostPhrase(lost), color = Lx.Text, fontSize = 13.sp)
+        }
+        Text("$lost", style = display(44.sp, Lx.Blaze))
+        Text(if (lost == 1) " HR" else " HRS", style = display(20.sp, Lx.Blaze), modifier = Modifier.padding(top = 10.dp))
+    }
+}
+
+@Composable
+private fun ActionBanner(kicker: String, label: String, color: Color, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(color.copy(alpha = 0.12f))
+            .border(1.dp, color, RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(kicker, style = Kicker, modifier = Modifier.weight(1f))
+        Text(label, style = display(22.sp, color))
+    }
+}
+
+/** Productive (volt), entertainment (blaze) and missed (red) hours. */
+@Composable
+private fun SplitBar(day: DaySummary) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp).height(8.dp).clip(RoundedCornerShape(99.dp)).background(Lx.Surface2),
+    ) {
+        if (day.productive > 0) Box(Modifier.weight(day.productive.toFloat()).fillMaxHeight().background(Lx.Volt))
+        if (day.entertainment > 0) Box(Modifier.weight(day.entertainment.toFloat()).fillMaxHeight().background(Lx.Blaze))
+        if (day.missed > 0) Box(Modifier.weight(day.missed.toFloat()).fillMaxHeight().background(Lx.Danger.copy(alpha = 0.55f)))
+    }
+}
+
+@Composable
+private fun HourRow(h: HourStat, onLog: () -> Unit, onPhoto: (String) -> Unit) {
     val shape = RoundedCornerShape(14.dp)
-    val border = when (state) {
-        HourState.NOW -> Lx.Volt
-        HourState.MISSED -> Lx.Danger.copy(alpha = 0.5f)
+    val future = h.kind == HourKind.FUTURE
+    val border = when {
+        h.current -> Lx.Volt
+        h.kind == HourKind.MISSED -> Lx.Danger.copy(alpha = 0.5f)
         else -> Lx.Line
     }
     Row(
         Modifier
             .fillMaxWidth()
-            .alpha(if (state == HourState.FUTURE && entries.isEmpty()) 0.4f else 1f)
+            .alpha(if (future && h.plan == null) 0.4f else if (future) 0.7f else 1f)
             .clip(shape)
-            .background(if (state == HourState.FUTURE) Color.Transparent else Lx.Surface)
-            .border(if (state == HourState.NOW) 2.dp else 1.dp, border, shape)
+            .background(if (future) Color.Transparent else Lx.Surface)
+            .border(if (h.current) 2.dp else 1.dp, border, shape)
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Column(Modifier.width(62.dp)) {
-            Text("%02d:00".format(hour), style = display(24.sp, if (state == HourState.MISSED) Lx.Danger else Lx.Text))
-            if (state == HourState.NOW) {
-                Text(
-                    "NOW",
-                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Lx.Volt).padding(horizontal = 6.dp, vertical = 1.dp),
-                    color = Lx.Ink, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold,
-                )
-            }
+            Text("%02d:00".format(h.hour), style = display(24.sp, if (h.kind == HourKind.MISSED) Lx.Danger else Lx.Text))
+            if (h.current) Pill("NOW", Lx.Volt)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            entries.forEach { EntryCard(it, onPhoto) }
-            val link = when (state) {
-                HourState.NOW -> if (entries.isEmpty()) "LOG THIS HOUR →" else "+ ADD MORE"
-                HourState.MISSED -> "MISSED — LOG IT →"
-                HourState.PAST -> "+ ADD"
-                HourState.FUTURE -> null
+            h.plan?.let { plan ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("PLAN · ", style = Kicker)
+                    Text(plan.goal, style = display(18.sp, Lx.Volt), modifier = Modifier.weight(1f))
+                    when (h.keptPlan) {
+                        true -> Pill("✓ KEPT", Lx.Volt)
+                        false -> Pill("✕ OFF PLAN", Lx.Blaze)
+                        null -> {}
+                    }
+                }
+            }
+            h.entries.forEach { EntryCard(it, onPhoto) }
+            val link = when {
+                h.current -> if (h.entries.isEmpty()) "LOG THIS HOUR →" else "+ ADD MORE"
+                h.kind == HourKind.MISSED -> "MISSED · COUNTS AS LOST — LOG IT →"
+                h.kind == HourKind.FUTURE -> null
+                else -> "+ ADD"
             }
             if (link != null) {
                 Text(
                     link,
-                    modifier = Modifier.clickable(onClick = onLog).padding(vertical = 8.dp),
-                    color = if (state == HourState.MISSED) Lx.Danger else Lx.Volt,
+                    modifier = Modifier.clickable(onClick = onLog).padding(vertical = 6.dp),
+                    color = if (h.kind == HourKind.MISSED) Lx.Danger else Lx.Volt,
                     fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, letterSpacing = 1.2.sp,
                 )
-            } else if (entries.isEmpty()) {
-                Text("—", color = Lx.Muted, modifier = Modifier.padding(vertical = 8.dp))
+            } else if (h.entries.isEmpty() && h.plan == null) {
+                Text("—", color = Lx.Muted, modifier = Modifier.padding(vertical = 6.dp))
             }
         }
     }
@@ -259,11 +329,7 @@ private fun EntryCard(entry: Entry, onPhoto: (String) -> Unit) {
         }
         Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    entry.tag.label(),
-                    modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(entry.tag.color()).padding(horizontal = 6.dp, vertical = 1.dp),
-                    color = Lx.Ink, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp,
-                )
+                Pill(entry.tag.label(), entry.tag.color())
                 Spacer(Modifier.width(6.dp))
                 Text(time.format(DateTimeFormatter.ofPattern("HH:mm")), color = Lx.Muted, fontSize = 11.sp)
             }
@@ -280,6 +346,7 @@ private fun EntryCard(entry: Entry, onPhoto: (String) -> Unit) {
                     else scope.launch {
                         AppDatabase.get(context).entries().delete(entry)
                         Photos.delete(entry.photoPath)
+                        Widgets.refresh(context)
                     }
                 }
                 .padding(horizontal = 10.dp, vertical = 8.dp),

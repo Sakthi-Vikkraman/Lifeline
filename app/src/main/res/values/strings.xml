@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">Lifeline</string>
+    <string name="widget_today_label">Lifeline Today</string>
+    <string name="widget_checkin_label">Lifeline Check-in</string>
+    <string name="widget_today_description">Today\'s logs, win streak and hour-by-hour strip</string>
+    <string name="widget_checkin_description">Next check-in and a one-tap log button</string>
 </resources>

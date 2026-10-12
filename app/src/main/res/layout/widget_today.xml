@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingTop="12dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_notification"
+            android:tint="#FFC8FF00" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:fontFamily="sans-serif-condensed"
+            android:textStyle="bold"
+            android:letterSpacing="0.06"
+            android:text="LIFELINE"
+            android:textColor="#FFF4F4F2"
+            android:textSize="19sp" />
+
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:gravity="end"
+            android:letterSpacing="0.08"
+            android:maxLines="1"
+            android:text="NEXT CHECK-IN 15:00"
+            android:textColor="#FF8B8B93"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <LinearLayout style="@style/WidgetStat">
+            <TextView android:id="@+id/reps" style="@style/WidgetStatValue" android:text="0/8" android:textColor="#FFC8FF00" />
+            <TextView style="@style/WidgetStatLabel" android:text="REPS" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/WidgetStat">
+            <TextView android:id="@+id/lost" style="@style/WidgetStatValue" android:text="0H" android:textColor="#FFFF4D1A" />
+            <TextView style="@style/WidgetStatLabel" android:text="LOST" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/WidgetStat">
+            <TextView android:id="@+id/plan" style="@style/WidgetStatValue" android:text="—" />
+            <TextView style="@style/WidgetStatLabel" android:text="PLAN KEPT" />
+        </LinearLayout>
+
+        <LinearLayout style="@style/WidgetStat">
+            <TextView android:id="@+id/streak" style="@style/WidgetStatValue" android:text="0" />
+            <TextView style="@style/WidgetStatLabel" android:text="STREAK" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- One cell per hour in the alarm window, drawn as a bitmap by TodayWidget -->
+    <ImageView
+        android:id="@+id/strip"
+        android:layout_width="match_parent"
+        android:layout_height="18dp"
+        android:contentDescription="Hour by hour"
+        android:scaleType="fitXY" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/window"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:letterSpacing="0.08"
+            android:text="07:00 — 23:00"
+            android:textColor="#FF8B8B93"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/log_btn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/widget_btn"
+            android:fontFamily="sans-serif-condensed"
+            android:textStyle="bold"
+            android:letterSpacing="0.08"
+            android:paddingStart="14dp"
+            android:paddingTop="5dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="5dp"
+            android:text="+ LOG"
+            android:textColor="#FF0B0B0C"
+            android:textSize="17sp" />
+    </LinearLayout>
+</LinearLayout>

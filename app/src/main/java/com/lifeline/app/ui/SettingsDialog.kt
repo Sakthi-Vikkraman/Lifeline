@@ -43,6 +43,7 @@ import com.lifeline.app.data.Prefs
 import com.lifeline.app.ui.theme.Kicker
 import com.lifeline.app.ui.theme.Lx
 import com.lifeline.app.ui.theme.display
+import com.lifeline.app.widget.Widgets
 
 private data class Check(val label: String, val ok: Boolean, val fix: (Context) -> Unit)
 
@@ -82,6 +83,7 @@ fun SettingsDialog(onDismiss: () -> Unit, onTestAlarm: () -> Unit) {
     fun update(s: com.lifeline.app.data.Settings) {
         prefs.updateSettings(s)
         AlarmScheduler.scheduleNext(context)
+        Widgets.refresh(context)
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -101,13 +103,22 @@ fun SettingsDialog(onDismiss: () -> Unit, onTestAlarm: () -> Unit) {
                 HourStepper("UNTIL", settings.endHour, Modifier.weight(1f)) { update(settings.copy(endHour = it)) }
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Alarm sound", color = Lx.Text, modifier = Modifier.weight(1f))
-                Switch(
-                    checked = settings.sound,
-                    onCheckedChange = { update(settings.copy(sound = it)) },
-                    colors = SwitchDefaults.colors(checkedTrackColor = Lx.Volt, checkedThumbColor = Lx.Ink),
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("DAILY GOAL · PRODUCTIVE HOURS", style = Kicker)
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Lx.Bg).border(1.dp, Lx.Line, RoundedCornerShape(12.dp)).padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SquareIconButton(Icons.Filled.Remove, "Fewer", size = 34.dp) { update(settings.copy(dailyGoal = (settings.dailyGoal - 1).coerceAtLeast(1))) }
+                    Text("${settings.dailyGoal} REPS", style = display(22.sp), modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    SquareIconButton(Icons.Filled.Add, "More", size = 34.dp) { update(settings.copy(dailyGoal = (settings.dailyGoal + 1).coerceAtMost(16))) }
+                }
+            }
+
+            SettingSwitch("Alarm sound", null, settings.sound) { update(settings.copy(sound = it)) }
+            SettingSwitch("Reward sounds", "Level-up sound for productive check-ins", settings.rewardSound) { update(settings.copy(rewardSound = it)) }
+            SettingSwitch("Photo proof for productivity", "No typing \"studying\" from bed", settings.photoForProductive) {
+                update(settings.copy(photoForProductive = it))
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -134,6 +145,21 @@ fun SettingsDialog(onDismiss: () -> Unit, onTestAlarm: () -> Unit) {
                 LxButton("DONE", modifier = Modifier.weight(1f)) { onDismiss() }
             }
         }
+    }
+}
+
+@Composable
+private fun SettingSwitch(label: String, hint: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(label, color = Lx.Text)
+            hint?.let { Text(it, color = Lx.Muted, fontSize = 12.sp) }
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(checkedTrackColor = Lx.Volt, checkedThumbColor = Lx.Ink),
+        )
     }
 }
 

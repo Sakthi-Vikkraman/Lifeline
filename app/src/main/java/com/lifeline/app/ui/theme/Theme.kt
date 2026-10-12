@@ -38,12 +38,13 @@ val Kicker = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, lett
 fun Tag.color() = if (this == Tag.PRODUCTIVITY) Lx.Volt else Lx.Blaze
 fun Tag.label() = if (this == Tag.PRODUCTIVITY) "PRODUCTIVITY" else "ENTERTAINMENT"
 
-/** Calendar day color: hue slides blaze → volt with the productive share; strength grows with hours logged. */
-fun dayColor(productive: Int, entertainment: Int, fullDay: Int): Color? {
-    val total = productive + entertainment
-    if (total == 0) return null
-    val mix = lerp(Lx.Blaze, Lx.Volt, productive.toFloat() / total)
-    val alpha = 0.22f + 0.78f * minOf(total.toFloat() / maxOf(fullDay, 1), 1f)
+/**
+ * Calendar day color: hue slides blaze → volt with the productive share of tracked hours (missed hours
+ * count as lost); strength grows with how many hours were logged.
+ */
+fun dayColor(share: Float, loggedHours: Int, fullDay: Int): Color {
+    val mix = lerp(Lx.Blaze, Lx.Volt, share)
+    val alpha = 0.22f + 0.78f * minOf(loggedHours.toFloat() / maxOf(fullDay, 1), 1f)
     return mix.copy(alpha = alpha)
 }
 

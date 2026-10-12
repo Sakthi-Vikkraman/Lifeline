@@ -33,10 +33,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lifeline.app.data.AppDatabase
+import com.lifeline.app.data.DaySummary
 import com.lifeline.app.data.Prefs
+import com.lifeline.app.data.Stats
+import com.lifeline.app.data.WeekReport
 import com.lifeline.app.ui.theme.Kicker
 import com.lifeline.app.ui.theme.Lx
 import com.lifeline.app.ui.theme.dayColor
@@ -50,18 +54,30 @@ fun CalendarScreen(
     month: YearMonth,
     onMonthChange: (YearMonth) -> Unit,
     onOpenDay: (LocalDate) -> Unit,
+    onReport: () -> Unit,
     contentPadding: PaddingValues,
 ) {
     val context = LocalContext.current
     val dao = remember { AppDatabase.get(context).entries() }
-    val settings by Prefs.get(context).settings.collectAsState()
-    val today = rememberNow().toLocalDate()
+    val prefs = remember { Prefs.get(context) }
+    val settings by prefs.settings.collectAsState()
+    val now = rememberNow()
+    val today = now.toLocalDate()
     val first = month.atDay(1)
     val last = month.atEndOfMonth()
-    val counts by remember(month) { dao.observeDayCounts(first.toString(), last.toString()) }.collectAsState(initial = emptyList())
-    val byDay = counts.associateBy { it.date }
-    val total = counts.sumOf { it.total }
-    val productive = counts.sumOf { it.productive }
+    val weekStart = WeekReport.weekStart(today)
+    // Load the month plus this week and last week, for the report card.
+    val from = minOf(first, weekStart.minusDays(7)).toString()
+    val to = maxOf(last, today).toString()
+    val entries by remember(from, to) { dao.observeBetween(from, to) }.collectAsState(initial = emptyList())
+    val plans by remember(from, to) { dao.observePlansBetween(from, to) }.collectAsState(initial = emptyList())
+
+    val days = remember(entries, plans, settings, now, month) {
+        Stats.summarizeRange(first, minOf(last, today), entries, plans, settings, now, prefs.trackingSince).associateBy { it.date }
+    }
+    val report = remember(entries, plans, settings, now) { WeekReport.build(weekStart, entries, plans, settings, now, prefs.trackingSince) }
+    val productive = days.values.sumOf { it.productive }
+    val lost = days.values.sumOf { it.lost }
     val fullDay = settings.activeHours().size
     val isCurrent = month == YearMonth.from(today)
 
@@ -70,18 +86,20 @@ fun CalendarScreen(
             .verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = contentPadding.calculateTopPadding() + 8.dp, bottom = contentPadding.calculateBottomPadding() + 96.dp),
     ) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.padding(top = 10.dp)) { ReportCard(report, onReport) }
+
+        Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             SquareIconButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous month") { onMonthChange(month.minusMonths(1)) }
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(if (total > 0) "$total LOGS · ${productive * 100 / total}% PRODUCTIVE" else "NO LOGS YET", style = Kicker)
+                Text(if (productive + lost > 0) "$productive H PRODUCTIVE · $lost H LOST" else "NOTHING TRACKED YET", style = Kicker)
                 Text(month.format(DateTimeFormatter.ofPattern("MMMM yyyy")).uppercase(), style = display(40.sp))
             }
             SquareIconButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next month", enabled = !isCurrent) { onMonthChange(month.plusMonths(1)) }
         }
 
-        Row(Modifier.padding(top = 8.dp, bottom = 6.dp)) {
+        Row(Modifier.padding(bottom = 6.dp)) {
             listOf("M", "T", "W", "T", "F", "S", "S").forEach {
-                Text(it, style = Kicker, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text(it, style = Kicker, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
             }
         }
 
@@ -91,10 +109,7 @@ fun CalendarScreen(
             Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 week.forEach { day ->
                     Box(Modifier.weight(1f)) {
-                        if (day != null) {
-                            val c = byDay[day.toString()]
-                            DayCell(day, c?.productive ?: 0, c?.entertainment ?: 0, fullDay, today) { onOpenDay(day) }
-                        }
+                        if (day != null) DayCell(day, days[day], fullDay, today) { onOpenDay(day) }
                     }
                 }
                 repeat(7 - week.size) { Box(Modifier.weight(1f)) }
@@ -110,19 +125,23 @@ fun CalendarScreen(
                     .background(Brush.horizontalGradient(listOf(Lx.Blaze, Color(0xFFE3A60D), Lx.Volt))),
             )
             Row {
-                Text("ENTERTAINMENT", color = Lx.Blaze, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
+                Text("LOST", color = Lx.Blaze, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
                 Box(Modifier.weight(1f))
-                Text("PRODUCTIVITY", color = Lx.Volt, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
+                Text("PRODUCTIVE", color = Lx.Volt, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
             }
-            Text("Number = works logged that day. Brighter = more hours logged. Tap a day to open it.", color = Lx.Muted, fontSize = 12.sp)
+            Text(
+                "Number = works logged that day. Color = productive share of tracked hours, where missed check-ins count as lost. Brighter = more hours logged. Tap a day to open it.",
+                color = Lx.Muted, fontSize = 12.sp,
+            )
         }
     }
 }
 
 @Composable
-private fun DayCell(day: LocalDate, productive: Int, entertainment: Int, fullDay: Int, today: LocalDate, onClick: () -> Unit) {
-    val color = dayColor(productive, entertainment, fullDay)
-    val total = productive + entertainment
+private fun DayCell(day: LocalDate, summary: DaySummary?, fullDay: Int, today: LocalDate, onClick: () -> Unit) {
+    val share = summary?.share
+    val color = share?.let { dayColor(it, summary.productive + summary.entertainment, fullDay) }
+    val logs = summary?.logs ?: 0
     val future = day > today
     val ink = color != null && color.alpha > 0.55f
     val shape = RoundedCornerShape(10.dp)
@@ -136,11 +155,13 @@ private fun DayCell(day: LocalDate, productive: Int, entertainment: Int, fullDay
             .background(color ?: Lx.Surface)
             .then(if (color == null) Modifier.border(1.dp, Lx.Line, shape) else Modifier)
             .clickable(enabled = !future, onClick = onClick)
-            .semantics { contentDescription = "$day: $productive productivity, $entertainment entertainment" }
+            .semantics {
+                contentDescription = summary?.let { "$day: ${it.productive} productive hours, ${it.lost} lost, $logs logs" } ?: "$day"
+            }
             .padding(horizontal = 5.dp, vertical = 3.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         Text("${day.dayOfMonth}", style = display(16.sp, if (ink) Lx.Ink else Lx.Text))
-        if (total > 0) Text("$total", style = display(20.sp, if (ink) Lx.Ink else Lx.Text), modifier = Modifier.align(Alignment.End))
+        if (logs > 0) Text("$logs", style = display(20.sp, if (ink) Lx.Ink else Lx.Text), modifier = Modifier.align(Alignment.End))
     }
 }

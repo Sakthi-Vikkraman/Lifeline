@@ -35,6 +35,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,6 +66,7 @@ import com.lifeline.app.ui.theme.Lx
 import com.lifeline.app.ui.theme.color
 import com.lifeline.app.ui.theme.display
 import com.lifeline.app.ui.theme.label
+import com.lifeline.app.widget.Widgets
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -82,7 +84,8 @@ fun CheckInForm(
     mode: CheckInMode,
     date: LocalDate,
     initialHour: Int,
-    onDone: (Tag) -> Unit,
+    onDone: (Reward) -> Unit,
+    line: String? = null,
     onCancel: () -> Unit = {},
     onMute: () -> Unit = {},
 ) {
@@ -98,6 +101,9 @@ fun CheckInForm(
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var muted by rememberSaveable { mutableStateOf(!settings.sound) }
+    var kept by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    val plans by remember(date) { AppDatabase.get(context).entries().observePlans(date.toString()) }.collectAsState(initial = emptyList())
+    val plan = plans.firstOrNull { it.hour == hour }
 
     fun importPhoto(uri: Uri) {
         busy = true
@@ -129,17 +135,22 @@ fun CheckInForm(
         when {
             photoPath == null && trimmed.isEmpty() -> error = "No proof, no submit. Snap a photo or type what you're doing."
             chosen == null -> error = "Tag it: productivity or entertainment."
+            chosen == Tag.PRODUCTIVITY && settings.photoForProductive && photoPath == null ->
+                error = "Productivity needs photo proof. Snap it or it didn't happen."
+            plan != null && kept == null -> error = "The plan said ${plan.goal}. Did you stick to it?"
             else -> {
                 busy = true
                 scope.launch {
                     AppDatabase.get(context).entries().insert(
-                        Entry(date = date.toString(), hour = hour, createdAt = System.currentTimeMillis(), text = trimmed, tag = chosen, photoPath = photoPath),
+                        Entry(date = date.toString(), hour = hour, createdAt = System.currentTimeMillis(), text = trimmed, tag = chosen, photoPath = photoPath,
+                            keptPlan = if (plan != null) kept else null),
                     )
+                    Widgets.refresh(context)
                     val pending = Prefs.get(context).pending.value
                     if (mode == CheckInMode.ALARM || (pending != null && pending.date == date.toString() && pending.hour == hour)) {
                         AlarmScheduler.resolve(context)
                     }
-                    onDone(chosen)
+                    onDone(buildReward(context, date, hour, chosen))
                 }
             }
         }
@@ -162,13 +173,16 @@ fun CheckInForm(
             LaunchedEffect(Unit) { while (true) { delay(600); blink = !blink } }
             Text("● ALARM — CLOCK IN", style = Kicker.copy(color = if (blink) Lx.Blaze else Color.Transparent, fontSize = 12.sp))
             Text("%02d:00".format(hour), style = display(88.sp, spacing = 0.02.em))
-            Text("What are you doing right now? Snap it or type it. The alarm stops when you submit.", color = Lx.Muted)
+            Text(line ?: "What are you doing right now? Snap it or type it.", style = display(26.sp, Lx.Text))
+            Text("The alarm stops when you submit.", color = Lx.Muted)
         } else {
             val day = if (date == LocalDate.now()) "TODAY" else date.format(DateTimeFormatter.ofPattern("EEE d MMM")).uppercase()
             Text("CHECK-IN · $day", style = Kicker.copy(color = Lx.Volt, fontSize = 12.sp))
             Text("LOG THE WORK", style = display(46.sp))
-            HourPicker(date, hour) { hour = it }
+            HourPicker(date, hour) { hour = it; kept = null }
         }
+
+        plan?.let { PlanCheck(it.goal, kept) { v -> kept = v; error = null } }
 
         PhotoBox(
             photoPath = photoPath,
@@ -232,6 +246,30 @@ fun CheckInForm(
     }
 }
 
+/** Plan vs reality: what this hour was planned for, and whether you stuck to it. */
+@Composable
+private fun PlanCheck(goal: String, kept: Boolean?, onPick: (Boolean) -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Lx.Bg).border(1.dp, Lx.Volt, RoundedCornerShape(14.dp)).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("THE PLAN", style = Kicker.copy(color = Lx.Volt), modifier = Modifier.weight(1f))
+            Text(goal, style = display(24.sp, Lx.Volt))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            listOf(true to "✓ KEPT IT", false to "✕ OFF PLAN").forEach { (value, label) ->
+                val on = kept == value
+                val c = if (value) Lx.Volt else Lx.Blaze
+                Box(
+                    Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(if (on) c else Color.Transparent)
+                        .border(2.dp, if (on) c else Lx.Line, RoundedCornerShape(10.dp)).clickable { onPick(value) }.padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text(label, style = display(19.sp, if (on) Lx.Ink else Lx.Text)) }
+            }
+        }
+    }
+}
 
 @Composable
 private fun HourPicker(date: LocalDate, selected: Int, onPick: (Int) -> Unit) {

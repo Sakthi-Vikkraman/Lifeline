@@ -36,6 +36,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,10 +63,14 @@ import coil.compose.AsyncImage
 import com.lifeline.app.R
 import com.lifeline.app.alarm.AlarmScheduler
 import com.lifeline.app.data.Prefs
-import com.lifeline.app.data.Tag
 import com.lifeline.app.ui.theme.LifelineTheme
 import com.lifeline.app.ui.theme.Lx
 import com.lifeline.app.ui.theme.display
+import com.lifeline.app.Actions
+import com.lifeline.app.data.Quotes
+import com.lifeline.app.data.WeekReport
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import java.io.File
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -72,6 +78,9 @@ import java.time.YearMonth
 
 class MainActivity : ComponentActivity() {
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    /** Set from widget buttons and coach notifications; MainScreen opens the matching screen and clears it. */
+    private val request = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,22 +90,41 @@ class MainActivity : ComponentActivity() {
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        setContent { LifelineTheme { MainScreen() } }
+        if (savedInstanceState == null) request.value = intent?.action?.takeIf { it in SCREEN_ACTIONS }
+        setContent { LifelineTheme { MainScreen(request) } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.action?.takeIf { it in SCREEN_ACTIONS }?.let { request.value = it }
     }
 }
+
+private val SCREEN_ACTIONS = setOf(Actions.LOG, Actions.PLAN, Actions.REVIEW, Actions.REPORT)
 
 private enum class Tab { DASHBOARD, CALENDAR }
 
 private data class ManualLog(val date: LocalDate, val hour: Int)
 
-fun loggedToast(context: android.content.Context, tag: Tag) {
-    Toast.makeText(context, if (tag == Tag.PRODUCTIVITY) "LOGGED. KEEP PUSHING." else "LOGGED. EARN THE NEXT ONE.", Toast.LENGTH_SHORT).show()
+/** Full-screen flows layered over the tabs. */
+private sealed interface Overlay {
+    data class MorningPlan(val date: LocalDate) : Overlay
+    data class MorningQuoteCard(val quote: String, val planned: Int, val alarms: Int) : Overlay
+    data class Night(val date: LocalDate) : Overlay
+    data class Report(val start: LocalDate) : Overlay
+    data class Celebrate(val reward: Reward) : Overlay
 }
 
+/** Alarms still to come today, for the morning quote. */
+fun remainingAlarms(settings: com.lifeline.app.data.Settings, now: LocalDateTime = LocalDateTime.now()) =
+    settings.activeHours().count { now.toLocalDate().atTime(it, 0).plusHours(1) > now }
+
 @Composable
-private fun MainScreen() {
+private fun MainScreen(request: MutableState<String?>) {
     val context = LocalContext.current
-    val pending by Prefs.get(context).pending.collectAsState()
+    val scope = rememberCoroutineScope()
+    val prefs = remember { Prefs.get(context) }
+    val pending by prefs.pending.collectAsState()
 
     var tab by rememberSaveable { mutableStateOf(Tab.DASHBOARD) }
     var dashDate by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
@@ -104,6 +132,7 @@ private fun MainScreen() {
     var manual by remember { mutableStateOf<ManualLog?>(null) }
     var photo by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
+    var overlay by remember { mutableStateOf<Overlay?>(null) }
 
     // An unanswered alarm always takes over the screen when the app is opened.
     LifecycleResumeEffect(pending) {
@@ -114,7 +143,18 @@ private fun MainScreen() {
     fun openManual(date: LocalDate, hour: Int?) {
         val now = LocalDateTime.now()
         if (date > now.toLocalDate()) return
-        manual = ManualLog(date, hour ?: if (date == now.toLocalDate()) now.hour else Prefs.get(context).settings.value.startHour)
+        manual = ManualLog(date, hour ?: if (date == now.toLocalDate()) now.hour else prefs.settings.value.startHour)
+    }
+
+    LaunchedEffect(request.value) {
+        val today = LocalDate.now()
+        when (request.value) {
+            Actions.LOG -> { tab = Tab.DASHBOARD; dashDate = today.toString(); openManual(today, null) }
+            Actions.PLAN -> overlay = Overlay.MorningPlan(today)
+            Actions.REVIEW -> overlay = Overlay.Night(today)
+            Actions.REPORT -> overlay = Overlay.Report(WeekReport.weekStart(today))
+        }
+        request.value = null
     }
 
     Scaffold(
@@ -138,12 +178,16 @@ private fun MainScreen() {
                 onDateChange = { dashDate = it.toString() },
                 onLog = { d, h -> openManual(d, h) },
                 onPhoto = { photo = it },
+                onPlan = { overlay = Overlay.MorningPlan(it) },
+                onReview = { overlay = Overlay.Night(it) },
+                onReport = { overlay = Overlay.Report(it) },
                 contentPadding = padding,
             )
             Tab.CALENDAR -> CalendarScreen(
                 month = YearMonth.parse(calMonth),
                 onMonthChange = { calMonth = it.toString() },
                 onOpenDay = { dashDate = it.toString(); tab = Tab.DASHBOARD },
+                onReport = { overlay = Overlay.Report(WeekReport.weekStart(LocalDate.now())) },
                 contentPadding = padding,
             )
         }
@@ -155,9 +199,33 @@ private fun MainScreen() {
                 Box(Modifier.clip(RoundedCornerShape(20.dp)).border(1.dp, Lx.Line, RoundedCornerShape(20.dp))) {
                     CheckInForm(
                         mode = CheckInMode.MANUAL, date = m.date, initialHour = m.hour,
-                        onDone = { loggedToast(context, it); manual = null },
+                        onDone = { manual = null; overlay = Overlay.Celebrate(it) },
                         onCancel = { manual = null },
                     )
+                }
+            }
+        }
+    }
+
+    overlay?.let { o ->
+        Dialog(onDismissRequest = { overlay = null }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+            Box(Modifier.fillMaxSize()) {
+                when (o) {
+                    is Overlay.MorningPlan -> PlanScreen(
+                        date = o.date,
+                        onLocked = { n ->
+                            overlay = Overlay.MorningQuoteCard(Quotes.pick(prefs, "morning", Quotes.morning), n, remainingAlarms(prefs.settings.value))
+                        },
+                        onSkip = { overlay = null },
+                    )
+                    is Overlay.MorningQuoteCard -> MorningQuote(o.quote, o.planned, o.alarms) { overlay = null }
+                    is Overlay.Night -> NightReview(
+                        date = o.date,
+                        onDone = { overlay = null; Toast.makeText(context, "LOCKED IN. TOMORROW WE GO AGAIN.", Toast.LENGTH_SHORT).show() },
+                        onLater = { overlay = null },
+                    )
+                    is Overlay.Report -> ReportScreen(o.start) { overlay = null }
+                    is Overlay.Celebrate -> RewardOverlay(o.reward) { overlay = null }
                 }
             }
         }
@@ -177,9 +245,11 @@ private fun MainScreen() {
             onDismiss = { showSettings = false },
             onTestAlarm = {
                 showSettings = false
-                val now = LocalDateTime.now()
-                AlarmScheduler.raise(context, now.toLocalDate().toString(), now.hour)
-                context.startActivity(Intent(context, AlarmActivity::class.java))
+                scope.launch {
+                    val now = LocalDateTime.now()
+                    AlarmScheduler.raise(context, now.toLocalDate().toString(), now.hour, AlarmScheduler.coachLine(context, now.toLocalDate(), now.hour))
+                    context.startActivity(Intent(context, AlarmActivity::class.java))
+                }
             },
         )
     }
