@@ -1,0 +1,109 @@
+Lifeline Source-Available License, Version 1.0
+
+Copyright (c) 2026 Sakthi Vikkraman R. All rights reserved.
+
+This is NOT an open-source license. The source code is published so people can
+read it, report problems, and help improve this repository. Everything not
+expressly permitted below is reserved by the copyright holder ("Licensor").
+
+1. DEFINITIONS
+
+   "Software" means everything in the Lifeline repository at
+   https://github.com/Sakthi-Vikkraman/Lifeline, including source code, build
+   scripts, user-interface designs, text, graphics, icons, screenshots,
+   documentation, and any compiled builds (such as APK files), in any version.
+
+   "Official Release" means a compiled build published by the Licensor on the
+   Releases page of that repository.
+
+2. WHAT YOU MAY DO
+
+   Subject to the conditions of this license, you may:
+
+   a. View and read the Software.
+
+   b. Download and install Official Releases on your own devices for your
+      personal, non-commercial use.
+
+   c. Open issues in the repository to report bugs, request features, or ask
+      questions.
+
+   d. Fork the repository on GitHub, modify your fork, and build it locally,
+      solely to develop, test, and submit pull requests to this repository
+      that fix issues or improve the Software.
+
+3. WHAT YOU MAY NOT DO
+
+   Without the Licensor's prior written permission, you may not:
+
+   a. Copy, reproduce, or republish the Software, in whole or in part, except
+      as strictly necessary for the uses permitted in Section 2.
+
+   b. Distribute, sell, rent, sublicense, or otherwise make the Software, or
+      any build of it, available to others, including by publishing it on any
+      app store, website, or file-sharing service.
+
+   c. Publish or distribute modified versions or derivative works of the
+      Software, including forks used for anything other than Section 2(d).
+
+   d. Use the Software, or any part of it, as a basis, template, or reference
+      to create, reproduce, or recreate another application, product, or
+      service, including one with substantially similar code, design, or
+      features.
+
+   e. Use the Software for any commercial purpose.
+
+   f. Use the Software or its content to train, fine-tune, or evaluate
+      machine-learning or AI models, or to generate a reproduction of it.
+
+   g. Remove, obscure, or alter any copyright, license, or attribution notice.
+
+4. CONTRIBUTIONS
+
+   By submitting a pull request, patch, issue, comment, or other material to
+   this repository (a "Contribution"), you:
+
+   a. confirm that you created it or otherwise have the right to submit it;
+      and
+
+   b. grant the Licensor a perpetual, worldwide, non-exclusive, royalty-free,
+      irrevocable license to use, reproduce, modify, distribute, sublicense,
+      and otherwise exploit the Contribution as part of the Software or
+      otherwise.
+
+   You keep the copyright in your Contribution. The Licensor is not obliged to
+   accept, merge, or credit any Contribution.
+
+5. GITHUB TERMS OF SERVICE
+
+   Because the repository is public on GitHub, GitHub users have the rights
+   described in GitHub's Terms of Service to view and fork it on GitHub. This
+   license does not take those rights away, but any use of a fork beyond what
+   Section 2 allows is not permitted.
+
+6. THIRD-PARTY COMPONENTS
+
+   The Software includes third-party components, such as the Bebas Neue font
+   and open-source libraries, that are licensed under their own terms. Those
+   terms govern those components, and nothing in this license restricts the
+   rights they grant. See THIRD_PARTY_NOTICES.md.
+
+7. TERMINATION
+
+   If you break any term of this license, your permissions under it end
+   automatically and immediately. You must then stop using the Software and
+   delete any copies you have.
+
+8. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+9. LIMITATION OF LIABILITY
+
+   IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+   FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+To ask for permission beyond this license, open an issue in the repository.
