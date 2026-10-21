@@ -12,18 +12,26 @@ An Android app that keeps your day honest. An alarm rings at the top of every ho
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/alarm.png" width="200" alt="Hourly alarm screen"><br><sub><b>Hourly alarm</b></sub></td>
+    <td align="center"><img src="docs/screenshots/alarm.png" width="200" alt="Check-in alarm for a 14–17 work session"><br><sub><b>Session alarm</b></sub></td>
     <td align="center"><img src="docs/screenshots/dashboard.png" width="200" alt="Dashboard with hour-by-hour log"><br><sub><b>Dashboard</b></sub></td>
     <td align="center"><img src="docs/screenshots/calendar.png" width="200" alt="Calendar colored by productivity"><br><sub><b>Calendar</b></sub></td>
-    <td align="center"><img src="docs/screenshots/setup.png" width="200" alt="Setup screen"><br><sub><b>Setup</b></sub></td>
+    <td align="center"><img src="docs/screenshots/setup.png" width="200" alt="Setup with sessions and check-in style"><br><sub><b>Setup</b></sub></td>
   </tr>
 </table>
 
 <table>
   <tr>
-    <td align="center"><img src="docs/screenshots/plan.png" width="200" alt="Morning plan"><br><sub><b>Morning plan</b></sub></td>
+    <td align="center"><img src="docs/screenshots/plan.png" width="200" alt="Plan editor repeating a plan on weekdays"><br><sub><b>Plan any day</b></sub></td>
     <td align="center"><img src="docs/screenshots/reward.png" width="200" alt="Reward after a productive check-in"><br><sub><b>+1 REP</b></sub></td>
     <td align="center"><img src="docs/screenshots/report.png" width="200" alt="Weekly report card"><br><sub><b>Weekly report card</b></sub></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/sessions.png" width="200" alt="Dashboard timeline grouped into sessions"><br><sub><b>Sessions</b></sub></td>
+    <td align="center"><img src="docs/screenshots/sessions_editor.png" width="200" alt="Session editor"><br><sub><b>Edit sessions</b></sub></td>
+    <td align="center"><img src="docs/screenshots/stop.png" width="200" alt="Stop alarms dialog"><br><sub><b>Stop alarms</b></sub></td>
   </tr>
 </table>
 
