@@ -11,9 +11,10 @@ import kotlin.math.roundToInt
 
 /**
  * How one hour of the alarm window went (see [Stats.kindOf]). MISSED hours ended without any check-in and count as lost time, so ignoring the
- * alarm is never cheaper than admitting what you did.
+ * alarm is never cheaper than admitting what you did. PAUSED hours fell while alarms were switched off and
+ * count for nothing either way.
  */
-enum class HourKind { PRODUCTIVE, ENTERTAINMENT, MISSED, NOW, FUTURE, UNTRACKED }
+enum class HourKind { PRODUCTIVE, ENTERTAINMENT, MISSED, PAUSED, NOW, FUTURE, UNTRACKED }
 
 /** [current] is true for the hour in progress, whether or not it has been logged yet. */
 data class HourStat(val hour: Int, val kind: HourKind, val entries: List<Entry>, val plan: Plan?, val current: Boolean = false) {
@@ -31,9 +32,10 @@ data class DaySummary(val date: LocalDate, val hours: List<HourStat>) {
     val productive = hours.count { it.kind == HourKind.PRODUCTIVE }
     val entertainment = hours.count { it.kind == HourKind.ENTERTAINMENT }
     val missed = hours.count { it.kind == HourKind.MISSED }
+    val paused = hours.count { it.kind == HourKind.PAUSED }
     val lost = entertainment + missed
     val tracked = productive + lost
-    val logs = hours.sumOf { it.entries.size }
+    val logs = hours.flatMap { it.entries }.distinctBy { it.id }.size
     val planned = hours.count { it.keptPlan != null }
     val kept = hours.count { it.keptPlan == true }
 
@@ -69,17 +71,26 @@ object Stats {
         val byHour = entries.filter { it.date == key }.groupBy { it.hour }
         val planByHour = plans.filter { it.date == key }.associateBy { it.hour }
         val since = LocalDateTime.ofInstant(Instant.ofEpochMilli(trackingSince), ZoneId.systemDefault())
+        val sinceHour = since.withMinute(0).withSecond(0).withNano(0).plusHours(1)
+        fun millis(t: LocalDateTime) = t.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val hours = (settings.activeHours() + byHour.keys).distinct().sortedBy { settings.dayOrder(it) }.map { hour ->
-            val list = byHour[hour].orEmpty()
-            val start = date.atTime(hour, 0)
+            // In session mode every hour of a session shares its check-ins and is judged when the session ends.
+            val slot = if (settings.sessionMode) settings.slotOf(hour) else null
+            val span = slot?.let { it.start until it.end } ?: hour..hour
+            val list = span.flatMap { byHour[it].orEmpty() }.sortedBy { it.createdAt }
+            val start = date.atTime(span.first, 0)
+            val end = date.atStartOfDay().plusHours(span.last + 1L)
             val kind = when {
                 list.isNotEmpty() -> kindOf(list)
-                start.plusHours(1) <= now && settings.inWindow(hour) && start >= since.withMinute(0).withSecond(0).withNano(0).plusHours(1) -> HourKind.MISSED
-                start.plusHours(1) <= now -> HourKind.UNTRACKED
+                settings.inWindow(hour) && settings.pausedBetween(millis(start), millis(end)) -> HourKind.PAUSED
+                end <= now && settings.inWindow(hour) && start >= sinceHour -> HourKind.MISSED
+                end <= now -> HourKind.UNTRACKED
                 start <= now -> HourKind.NOW
                 else -> HourKind.FUTURE
             }
-            HourStat(hour, kind, list, planByHour[hour], current = start <= now && now < start.plusHours(1))
+            val plan = planByHour[span.first] ?: settings.defaultGoal(span.first)?.let { Plan(key, span.first, it) }
+            val hourStart = date.atTime(hour, 0)
+            HourStat(hour, kind, list, plan, current = hourStart <= now && now < hourStart.plusHours(1))
         }
         return DaySummary(date, hours)
     }
@@ -89,13 +100,17 @@ object Stats {
     ): List<DaySummary> = generateSequence(from) { it.plusDays(1) }.takeWhile { it <= to }
         .map { summarize(it, entries, plans, settings, now, trackingSince) }.toList()
 
-    /** Consecutive won days, ending today if today is already won, otherwise yesterday. */
+    /**
+     * Consecutive won days, ending today if today is already won, otherwise yesterday. Rest days (alarms
+     * off, nothing tracked) neither break nor extend the streak.
+     */
     fun winStreak(days: List<DaySummary>, today: LocalDate): Int {
         val byDate = days.associateBy { it.date }
         var d = if (byDate[today]?.won == true) today else today.minusDays(1)
         var streak = 0
-        while (byDate[d]?.won == true) {
-            streak++
+        while (true) {
+            val day = byDate[d] ?: break
+            if (day.won) streak++ else if (day.tracked > 0 || day.paused == 0) break
             d = d.minusDays(1)
         }
         return streak
@@ -186,7 +201,7 @@ data class WeekReport(
 /** Alarm copy that reacts to how the day is going. */
 object Coach {
     fun alarmLine(summary: DaySummary, hour: Int, settings: Settings): String {
-        val before = summary.hours.filter { settings.dayOrder(it.hour) < settings.dayOrder(hour) && it.kind != HourKind.UNTRACKED }
+        val before = summary.hours.filter { settings.dayOrder(it.hour) < settings.dayOrder(hour) && it.kind != HourKind.UNTRACKED && it.kind != HourKind.PAUSED }
         val lastTwo = before.takeLast(2).map { it.kind }
         val plan = summary.hours.firstOrNull { it.hour == hour }?.plan
         val productiveRun = before.reversed().takeWhile { it.kind == HourKind.PRODUCTIVE }.size

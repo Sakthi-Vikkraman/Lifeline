@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.lifeline.app.alarm.AlarmNotifier
+import com.lifeline.app.data.AlarmStyle
 import com.lifeline.app.data.AppDatabase
 import com.lifeline.app.data.PendingAlarm
 import com.lifeline.app.data.Prefs
@@ -68,7 +69,8 @@ class AlarmActivity : ComponentActivity() {
                 var stage by remember { mutableStateOf<Stage>(Stage.CheckIn) }
                 // A newer hour can fire while this one is still unanswered: switch to it.
                 LaunchedEffect(pending) { pending?.let { if (stage == Stage.CheckIn) alarm = it } }
-                BackHandler(enabled = stage == Stage.CheckIn) { /* no escape without proof */ }
+                val strict = prefs.settings.collectAsState().value.alarmStyle == AlarmStyle.ALARM
+                BackHandler(enabled = strict && stage == Stage.CheckIn) { /* no escape without proof */ }
 
                 Box(Modifier.fillMaxSize().background(Lx.Bg)) {
                     when (val s = stage) {
@@ -81,13 +83,15 @@ class AlarmActivity : ComponentActivity() {
                                     line = alarm.line,
                                     onDone = { reward -> lifecycleScope.launch { stage = Stage.Celebrate(reward, nextStage(alarm)) } },
                                     onMute = { AlarmNotifier.show(this@AlarmActivity, muted = true) },
+                                    // Notification style: the check-in can wait; the hour stays open until it's logged.
+                                    onCancel = if (strict) null else ({ finish() }),
                                 )
                             }
                         }
                         is Stage.Celebrate -> RewardOverlay(s.reward) { if (s.next == null) finish() else stage = s.next }
                         is Stage.Plan -> PlanScreen(
                             date = s.date,
-                            onLocked = { n -> stage = Stage.Morning(Quotes.pick(prefs, "morning", Quotes.morning), n, remainingAlarms(prefs.settings.value)) },
+                            onLocked = { n, _, _ -> stage = Stage.Morning(Quotes.pick(prefs, "morning", Quotes.morning), n, remainingAlarms(prefs.settings.value)) },
                             onSkip = { finish() },
                         )
                         is Stage.Morning -> MorningQuote(s.quote, s.planned, s.alarms) { finish() }
@@ -100,12 +104,12 @@ class AlarmActivity : ComponentActivity() {
 
     /** After the reward: plan the day if it's early and there's no plan yet, or review it at the last alarm. */
     private suspend fun nextStage(alarm: PendingAlarm): Stage? {
-        val hours = Prefs.get(this).settings.value.activeHours()
+        val starts = Prefs.get(this).settings.value.slots().map { it.start }
         val date = LocalDate.parse(alarm.date)
         val dao = AppDatabase.get(this).entries()
         return when {
-            hours.indexOf(alarm.hour) in 0..2 && dao.plansOn(alarm.date).isEmpty() -> Stage.Plan(date)
-            alarm.hour == hours.lastOrNull() && dao.reviewOn(alarm.date) == null -> Stage.Night(date)
+            starts.indexOf(alarm.hour) in 0..2 && dao.plansOn(alarm.date).isEmpty() -> Stage.Plan(date)
+            alarm.hour == starts.lastOrNull() && dao.reviewOn(alarm.date) == null -> Stage.Night(date)
             else -> null
         }
     }

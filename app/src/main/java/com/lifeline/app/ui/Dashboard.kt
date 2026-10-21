@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.lifeline.app.data.AlarmStyle
 import com.lifeline.app.data.AppDatabase
 import com.lifeline.app.data.DaySummary
 import com.lifeline.app.data.Entry
@@ -50,6 +51,7 @@ import com.lifeline.app.data.HourKind
 import com.lifeline.app.data.HourStat
 import com.lifeline.app.data.Photos
 import com.lifeline.app.data.Prefs
+import com.lifeline.app.data.Settings
 import com.lifeline.app.data.Stats
 import com.lifeline.app.data.WeekReport
 import com.lifeline.app.ui.theme.Kicker
@@ -76,7 +78,30 @@ fun rememberNow(): LocalDateTime {
     return now
 }
 
-private enum class Banner { PLAN, REVIEW, REPORT }
+private enum class Banner { PENDING, PLAN, TOMORROW, REVIEW, REPORT }
+
+/** One dashboard row: an hour, or in session mode a whole session ([start, end)). */
+private data class TimelineRow(val stat: HourStat, val start: Int, val end: Int)
+
+/** Session mode folds a session's hours into one row; they share check-ins and plan anyway. */
+private fun timelineRows(day: DaySummary, settings: Settings): List<TimelineRow> {
+    if (!settings.sessionMode) return day.hours.map { TimelineRow(it, it.hour, it.hour + 1) }
+    val rows = mutableListOf<TimelineRow>()
+    var i = 0
+    while (i < day.hours.size) {
+        val h = day.hours[i]
+        val slot = settings.slotOf(h.hour)
+        if (slot == null) {
+            rows += TimelineRow(h, h.hour, h.hour + 1)
+            i++
+        } else {
+            val group = day.hours.drop(i).takeWhile { settings.slotOf(it.hour) == slot }
+            rows += TimelineRow(group.first().copy(current = group.any { it.current }), slot.start, slot.end)
+            i += group.size
+        }
+    }
+    return rows
+}
 
 @Composable
 fun DashboardScreen(
@@ -97,10 +122,11 @@ fun DashboardScreen(
     val today = now.toLocalDate()
     val weekStart = WeekReport.weekStart(date)
     val from = minOf(weekStart, today.minusDays(120)).toString()
-    val to = maxOf(weekStart.plusDays(6), today).toString()
+    val to = maxOf(weekStart.plusDays(6), today.plusDays(1)).toString()
     val entries by remember(from, to) { dao.observeBetween(from, to) }.collectAsState(initial = emptyList())
     val plans by remember(from, to) { dao.observePlansBetween(from, to) }.collectAsState(initial = emptyList())
     val review by remember(date) { dao.observeReview(date.toString()) }.collectAsState(initial = null)
+    val pending by prefs.pending.collectAsState()
 
     val day = remember(entries, plans, settings, now, date) { Stats.summarize(date, entries, plans, settings, now, prefs.trackingSince) }
     val weekLost = remember(entries, plans, settings, now, weekStart) {
@@ -110,11 +136,18 @@ fun DashboardScreen(
         Stats.winStreak(Stats.summarizeRange(today.minusDays(120), today, entries, plans, settings, now, prefs.trackingSince), today)
     }
 
+    // Session names count as a plan, so a session day is never "unplanned".
+    val todayPlanned = if (date == today) day.hours.filter { it.plan != null }.distinctBy { it.plan }.size else 0
     val banners = buildList {
+        // Notification style never takes over the screen, so a waiting check-in shows here instead.
+        if (pending != null && settings.alarmStyle == AlarmStyle.NOTIFICATION) add(Banner.PENDING)
         if (date == today) {
             val last = settings.activeHours().lastOrNull()
-            if (plans.none { it.date == date.toString() } && last != null && settings.dayOrder(now.hour) <= settings.dayOrder(last)) add(Banner.PLAN)
-            val reviewTime = if (settings.startHour <= settings.endHour) now.hour >= settings.endHour else now.hour == last
+            val lastSlot = settings.slots().lastOrNull()
+            val reviewTime = lastSlot != null &&
+                if (settings.sessionMode || settings.startHour <= settings.endHour) now >= today.atTime(lastSlot.start, 0) else now.hour == lastSlot.start
+            if (last != null && settings.dayOrder(now.hour) <= settings.dayOrder(last) && !reviewTime) add(Banner.PLAN)
+            if (reviewTime && plans.none { it.date == today.plusDays(1).toString() }) add(Banner.TOMORROW)
             if (reviewTime && review == null) add(Banner.REVIEW)
             if (today.dayOfWeek == DayOfWeek.SUNDAY || today.dayOfWeek == DayOfWeek.MONDAY) add(Banner.REPORT)
         }
@@ -123,7 +156,8 @@ fun DashboardScreen(
 
     // Open on the current hour instead of the top of the day.
     val listState = rememberLazyListState()
-    val nowIndex = if (date == today) day.hours.indexOfFirst { it.hour == now.hour } else -1
+    val rows = remember(day, settings) { timelineRows(day, settings) }
+    val nowIndex = if (date == today) rows.indexOfFirst { it.stat.current } else -1
     LaunchedEffect(date, nowIndex >= 0) {
         if (nowIndex >= 0) listState.scrollToItem(maxOf(nowIndex + headerCount - 2, 0))
     }
@@ -147,7 +181,13 @@ fun DashboardScreen(
         banners.forEach { b ->
             item {
                 when (b) {
-                    Banner.PLAN -> ActionBanner("NO PLAN YET", "PLAN TODAY →", Lx.Volt) { onPlan(today) }
+                    Banner.PENDING -> ActionBanner("CHECK-IN WAITING · ${settings.slotLabel(pending?.hour ?: 0)}", "LOG IT →", Lx.Blaze) {
+                        context.startActivity(android.content.Intent(context, AlarmActivity::class.java))
+                    }
+                    Banner.PLAN ->
+                        if (todayPlanned == 0) ActionBanner("NO PLAN YET", "PLAN TODAY →", Lx.Volt) { onPlan(today) }
+                        else ActionBanner("TODAY'S PLAN", "EDIT PLAN →", Lx.Text) { onPlan(today) }
+                    Banner.TOMORROW -> ActionBanner("WIN TOMORROW TONIGHT", "PLAN TOMORROW →", Lx.Volt) { onPlan(today.plusDays(1)) }
                     Banner.REVIEW -> ActionBanner("DAY'S DONE", "NIGHT REVIEW →", Lx.Volt) { onReview(today) }
                     // Sunday: this week's card. Monday: the week that just ended.
                     Banner.REPORT -> ActionBanner("THE WEEK IS GRADED", "REPORT CARD →", Lx.Text) {
@@ -158,8 +198,18 @@ fun DashboardScreen(
         }
         item { LostCard(weekLost, if (weekStart == WeekReport.weekStart(today)) "THIS WEEK" else "WEEK OF ${weekStart.format(DateTimeFormatter.ofPattern("d MMM")).uppercase()}") }
         review?.let { r -> item { ReviewCard(r) } }
-        items(day.hours, key = { it.hour }) { h ->
-            HourRow(h, onLog = { onLog(date, h.hour) }, onPhoto = onPhoto)
+        items(rows, key = { it.start }) { row ->
+            val start = date.atTime(row.start, 0)
+            HourRow(
+                row.stat,
+                session = settings.sessionMode,
+                title = if (row.end - row.start > 1 || settings.sessionMode) "%02d–%02d".format(row.start, row.end) else "%02d:00".format(row.start),
+                started = start <= now,
+                onLog = { onLog(date, row.start) },
+                onPhoto = onPhoto,
+                // Only hours still ahead can be re-planned; the past stays as it was.
+                onEditPlan = if (date.atStartOfDay().plusHours(row.end.toLong()) > now) ({ onPlan(date) }) else null,
+            )
         }
     }
 }
@@ -248,9 +298,9 @@ private fun SplitBar(day: DaySummary) {
 }
 
 @Composable
-private fun HourRow(h: HourStat, onLog: () -> Unit, onPhoto: (String) -> Unit) {
+private fun HourRow(h: HourStat, title: String, session: Boolean, started: Boolean, onLog: () -> Unit, onPhoto: (String) -> Unit, onEditPlan: (() -> Unit)?) {
     val shape = RoundedCornerShape(14.dp)
-    val future = h.kind == HourKind.FUTURE
+    val future = !started
     val border = when {
         h.current -> Lx.Volt
         h.kind == HourKind.MISSED -> Lx.Danger.copy(alpha = 0.5f)
@@ -265,27 +315,31 @@ private fun HourRow(h: HourStat, onLog: () -> Unit, onPhoto: (String) -> Unit) {
             .border(if (h.current) 2.dp else 1.dp, border, shape)
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
-        Column(Modifier.width(62.dp)) {
-            Text("%02d:00".format(h.hour), style = display(24.sp, if (h.kind == HourKind.MISSED) Lx.Danger else Lx.Text))
+        Column(Modifier.width(72.dp)) {
+            Text(title, style = display(24.sp, if (h.kind == HourKind.MISSED) Lx.Danger else Lx.Text), maxLines = 1, softWrap = false)
             if (h.current) Pill("NOW", Lx.Volt)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             h.plan?.let { plan ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    if (onEditPlan != null) Modifier.clickable(onClick = onEditPlan) else Modifier,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text("PLAN · ", style = Kicker)
                     Text(plan.goal, style = display(18.sp, Lx.Volt), modifier = Modifier.weight(1f))
                     when (h.keptPlan) {
                         true -> Pill("✓ KEPT", Lx.Volt)
                         false -> Pill("✕ OFF PLAN", Lx.Blaze)
-                        null -> {}
+                        null -> if (onEditPlan != null) Text("EDIT", style = Kicker.copy(color = Lx.Volt))
                     }
                 }
             }
             h.entries.forEach { EntryCard(it, onPhoto) }
+            if (h.kind == HourKind.PAUSED) Text("ALARMS OFF · DOESN'T COUNT", style = Kicker.copy(color = Lx.Blaze))
             val link = when {
-                h.current -> if (h.entries.isEmpty()) "LOG THIS HOUR →" else "+ ADD MORE"
+                future -> null
+                h.current -> if (h.entries.isEmpty()) (if (session) "LOG THIS SESSION →" else "LOG THIS HOUR →") else "+ ADD MORE"
                 h.kind == HourKind.MISSED -> "MISSED · COUNTS AS LOST — LOG IT →"
-                h.kind == HourKind.FUTURE -> null
                 else -> "+ ADD"
             }
             if (link != null) {
@@ -295,7 +349,7 @@ private fun HourRow(h: HourStat, onLog: () -> Unit, onPhoto: (String) -> Unit) {
                     color = if (h.kind == HourKind.MISSED) Lx.Danger else Lx.Volt,
                     fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, letterSpacing = 1.2.sp,
                 )
-            } else if (h.entries.isEmpty() && h.plan == null) {
+            } else if (h.entries.isEmpty() && h.plan == null && h.kind != HourKind.PAUSED) {
                 Text("—", color = Lx.Muted, modifier = Modifier.padding(vertical = 6.dp))
             }
         }

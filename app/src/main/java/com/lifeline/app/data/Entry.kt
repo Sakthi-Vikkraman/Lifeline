@@ -63,8 +63,9 @@ interface EntryDao {
     @Query("SELECT * FROM entries WHERE date = :date ORDER BY createdAt")
     suspend fun entriesOn(date: String): List<Entry>
 
-    @Query("SELECT COUNT(*) FROM entries WHERE date = :date AND hour = :hour")
-    suspend fun countForHour(date: String, hour: Int): Int
+    /** Check-ins filed under hours [from, until) of [date]: one hour, or a whole session. */
+    @Query("SELECT COUNT(*) FROM entries WHERE date = :date AND hour >= :from AND hour < :until")
+    suspend fun countForHours(date: String, from: Int, until: Int): Int
 
     @Insert
     suspend fun insert(entry: Entry): Long

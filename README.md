@@ -33,9 +33,12 @@ An Android app that keeps your day honest. An alarm rings at the top of every ho
 
 - **Hourly alarm that means it.** Rings at the top of every hour in your chosen window, even when the app is closed, after a reboot, or with the phone locked. It wakes the screen and takes it over.
 - **Proof to dismiss.** The only way to stop it is to submit a check-in: a camera photo, a gallery photo, or a line of text, plus a tag. Back is blocked, the notification can't be swiped away, and Home leaves it ringing. **Mute** silences the sound but keeps the alarm until you log.
+- **Or just a notification.** Prefer something quieter? Switch the check-in style to **Notification** in setup. You get one sound, you can swipe it away, and you log when you're ready. A skipped check-in still counts as lost.
+- **Sessions instead of hours.** Track your day in your own blocks, like 07–09 GYM, 10–13 WORK, 14–17 WORK, 18–20 SELF IMPROVEMENT and 21–22 ENJOY. Each block rings once when it ends, and one check-in covers every hour in it. The block's name is its plan, unless you plan that day differently.
 - **Productivity vs. entertainment.** Every entry is tagged, and the whole app is colored by it: neon green for productivity, blaze orange for entertainment.
 - **No hiding.** A skipped check-in counts as a **lost hour**, just like entertainment, so ignoring the alarm never makes your day look better.
 - **Morning plan.** Before your first alarm, give every hour a job: pick a goal (Deep work, Gym, Study…) and tap the hours it owns. Locking it in shows a striking quote to start the day.
+- **Plan daily or for the month.** Edit today's plan any time from the dashboard (hours already over stay as they were), plan any day up to two months ahead, and repeat a plan to the end of the month: every day, weekdays only, or the same weekday each week.
 - **Plan vs. reality.** Each check-in shows what the hour was planned for and asks whether you stuck to it. The dashboard shows plan and reality side by side, plus a daily **plan kept** score.
 - **Rewards that hit.** A productive check-in plays a level-up sound with a volt burst, "+1 REP" and a motivational quote. Hitting your goal gets **GOAL CRUSHED**. Entertainment gets an honest nudge instead.
 - **Daily goal as reps.** Set how many productive hours you want, e.g. 8, and the dashboard and widgets count them like a rep counter.
@@ -70,6 +73,19 @@ An Android app that keeps your day honest. An alarm rings at the top of every ho
 | Vibrate | Vibrates with the alarm |
 
 Lifeline doesn't request internet, location, contacts or storage access. Photos you take are saved inside the app.
+
+### Taking a break
+
+Sick day, holiday, rest week? Switch the alarms off properly instead of ignoring them:
+
+1. Tap the **setup** button (top right).
+2. Scroll to **Alarms** and tap **STOP ALARMS**.
+3. Pick how long: **rest of today**, **3 days**, **1 week**, or **until I turn them back on**.
+4. Type **REST** to confirm, then tap **STOP**.
+
+Any ringing alarm stops too. While alarms are off there are no hourly alarms, no plan reminder and no coach notifications, and those hours count as neither productive nor lost. A rest day won't break your streak. Timed breaks end on their own in time for that morning's plan reminder. To come back early, open setup and tap **TURN ALARMS BACK ON**.
+
+To stop Lifeline completely, uninstall it. Your entries are stored only on the phone, so uninstalling deletes them.
 
 ### Tips
 

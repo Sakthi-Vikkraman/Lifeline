@@ -62,6 +62,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import coil.compose.AsyncImage
 import com.lifeline.app.R
 import com.lifeline.app.alarm.AlarmScheduler
+import com.lifeline.app.data.AlarmStyle
 import com.lifeline.app.data.Prefs
 import com.lifeline.app.ui.theme.LifelineTheme
 import com.lifeline.app.ui.theme.Lx
@@ -117,7 +118,7 @@ private sealed interface Overlay {
 
 /** Alarms still to come today, for the morning quote. */
 fun remainingAlarms(settings: com.lifeline.app.data.Settings, now: LocalDateTime = LocalDateTime.now()) =
-    settings.activeHours().count { now.toLocalDate().atTime(it, 0).plusHours(1) > now }
+    settings.slots().count { now.toLocalDate().atStartOfDay().plusHours(settings.alarmHour(it).toLong()) > now }
 
 @Composable
 private fun MainScreen(request: MutableState<String?>) {
@@ -134,16 +135,17 @@ private fun MainScreen(request: MutableState<String?>) {
     var showSettings by remember { mutableStateOf(false) }
     var overlay by remember { mutableStateOf<Overlay?>(null) }
 
-    // An unanswered alarm always takes over the screen when the app is opened.
+    // An unanswered alarm always takes over the screen when the app is opened (full-screen alarm style only).
     LifecycleResumeEffect(pending) {
-        if (pending != null) context.startActivity(Intent(context, AlarmActivity::class.java))
+        if (pending != null && prefs.settings.value.alarmStyle == AlarmStyle.ALARM) context.startActivity(Intent(context, AlarmActivity::class.java))
         onPauseOrDispose { }
     }
 
     fun openManual(date: LocalDate, hour: Int?) {
         val now = LocalDateTime.now()
         if (date > now.toLocalDate()) return
-        manual = ManualLog(date, hour ?: if (date == now.toLocalDate()) now.hour else prefs.settings.value.startHour)
+        val settings = prefs.settings.value
+        manual = ManualLog(date, hour ?: settings.logHour(if (date == now.toLocalDate()) now.hour else settings.dayStart))
     }
 
     LaunchedEffect(request.value) {
@@ -213,8 +215,13 @@ private fun MainScreen(request: MutableState<String?>) {
                 when (o) {
                     is Overlay.MorningPlan -> PlanScreen(
                         date = o.date,
-                        onLocked = { n ->
-                            overlay = Overlay.MorningQuoteCard(Quotes.pick(prefs, "morning", Quotes.morning), n, remainingAlarms(prefs.settings.value))
+                        onLocked = { n, edited, day ->
+                            // First plan of the day gets the morning quote; edits and plans ahead just close.
+                            if (edited || day != LocalDate.now()) {
+                                overlay = null
+                            } else {
+                                overlay = Overlay.MorningQuoteCard(Quotes.pick(prefs, "morning", Quotes.morning), n, remainingAlarms(prefs.settings.value))
+                            }
                         },
                         onSkip = { overlay = null },
                     )
@@ -247,7 +254,8 @@ private fun MainScreen(request: MutableState<String?>) {
                 showSettings = false
                 scope.launch {
                     val now = LocalDateTime.now()
-                    AlarmScheduler.raise(context, now.toLocalDate().toString(), now.hour, AlarmScheduler.coachLine(context, now.toLocalDate(), now.hour))
+                    val hour = prefs.settings.value.logHour(now.hour)
+                    AlarmScheduler.raise(context, now.toLocalDate().toString(), hour, AlarmScheduler.coachLine(context, now.toLocalDate(), hour))
                     context.startActivity(Intent(context, AlarmActivity::class.java))
                 }
             },
@@ -269,10 +277,14 @@ private fun TopBar(onSettings: () -> Unit) {
         Spacer(Modifier.width(8.dp))
         Text("LIFELINE", style = display(30.sp, spacing = 0.06.em))
         Spacer(Modifier.weight(1f))
-        if (next != null) {
+        val paused = settings.pauseAt(System.currentTimeMillis()) != null
+        if (next != null || paused) {
             Column(horizontalAlignment = Alignment.End) {
-                Text("NEXT CHECK-IN", color = Lx.Muted, fontSize = 10.sp, letterSpacing = 1.sp)
-                Text("%02d:00".format(next.hour), color = Lx.Text, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                Text(if (paused) "ALARMS OFF" else "NEXT CHECK-IN", color = if (paused) Lx.Blaze else Lx.Muted, fontSize = 10.sp, letterSpacing = 1.sp)
+                Text(
+                    next?.let { if (paused) it.format(java.time.format.DateTimeFormatter.ofPattern("EEE HH:mm")).uppercase() else "%02d:00".format(it.hour) } ?: "TAP SETUP",
+                    color = Lx.Text, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp,
+                )
             }
             Spacer(Modifier.width(12.dp))
         }

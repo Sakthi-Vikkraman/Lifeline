@@ -46,7 +46,9 @@ private class Snapshot(
     val day: DaySummary,
     val streak: Int,
     val next: LocalDateTime?,
-)
+) {
+    val paused = settings.pauseAt(System.currentTimeMillis()) != null
+}
 
 object Widgets {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -102,7 +104,8 @@ object Widgets {
 
         v.setInt(R.id.widget_root, "setBackgroundResource", if (alarm) R.drawable.widget_bg_alarm else R.drawable.widget_bg)
         when {
-            alarm -> v.setTextViewText(R.id.status, "● CLOCK IN %02d:00".format(s.pending!!.hour))
+            alarm -> v.setTextViewText(R.id.status, "● CLOCK IN " + s.settings.slotLabel(s.pending!!.hour))
+            s.paused -> v.setTextViewText(R.id.status, "ALARMS OFF")
             s.next != null -> v.setTextViewText(R.id.status, "NEXT CHECK-IN %02d:00".format(s.next.hour))
             else -> v.setTextViewText(R.id.status, "")
         }
@@ -112,7 +115,11 @@ object Widgets {
         v.setTextViewText(R.id.lost, "${s.day.lost}H")
         v.setTextViewText(R.id.plan, s.day.planScore?.let { "$it%" } ?: "—")
         v.setTextViewText(R.id.streak, "${s.streak}")
-        v.setTextViewText(R.id.window, "%02d:00 — %02d:00".format(s.settings.startHour, s.settings.endHour))
+        v.setTextViewText(
+            R.id.window,
+            if (s.settings.sessionMode) "${s.settings.sessions.size} SESSIONS"
+            else "%02d:00 — %02d:00".format(s.settings.startHour, s.settings.endHour),
+        )
 
         val density = context.resources.displayMetrics.density
         val widthDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH).takeIf { it > 0 } ?: 250
@@ -134,12 +141,13 @@ object Widgets {
         if (alarm) {
             v.setTextViewText(R.id.kicker, "● ALARM")
             v.setTextColor(R.id.kicker, BLAZE)
-            v.setTextViewText(R.id.time, "%02d:00".format(s.pending!!.hour))
+            val slot = s.settings.slotOf(s.pending!!.hour)?.takeIf { s.settings.sessionMode }
+            v.setTextViewText(R.id.time, slot?.let { "%02d–%02d".format(it.start, it.end) } ?: "%02d:00".format(s.pending.hour))
             v.setTextViewText(R.id.summary, "LOG IT TO STOP IT")
             v.setTextColor(R.id.summary, BLAZE)
         } else {
-            v.setTextViewText(R.id.kicker, "NEXT CHECK-IN")
-            v.setTextColor(R.id.kicker, MUTED)
+            v.setTextViewText(R.id.kicker, if (s.paused) "ALARMS OFF" else "NEXT CHECK-IN")
+            v.setTextColor(R.id.kicker, if (s.paused) BLAZE else MUTED)
             v.setTextViewText(R.id.time, s.next?.let { "%02d:00".format(it.hour) } ?: "—")
             if (s.day.tracked == 0) {
                 v.setTextViewText(R.id.summary, "0/$goal REPS · LET'S GO")

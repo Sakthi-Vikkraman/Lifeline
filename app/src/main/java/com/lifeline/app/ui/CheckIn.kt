@@ -76,8 +76,9 @@ import java.time.format.DateTimeFormatter
 enum class CheckInMode { ALARM, MANUAL }
 
 /**
- * The check-in form. In [CheckInMode.ALARM] it's locked to the alarm's hour and the caller offers no way out
- * except submitting; in [CheckInMode.MANUAL] the hour is selectable and it can be cancelled.
+ * The check-in form. In [CheckInMode.ALARM] it's locked to the alarm's hour (or session); with no [onCancel]
+ * the only way out is submitting (full-screen alarm style), otherwise it offers LATER. In
+ * [CheckInMode.MANUAL] the hour or session is selectable and it can be cancelled.
  */
 @Composable
 fun CheckInForm(
@@ -86,7 +87,7 @@ fun CheckInForm(
     initialHour: Int,
     onDone: (Reward) -> Unit,
     line: String? = null,
-    onCancel: () -> Unit = {},
+    onCancel: (() -> Unit)? = null,
     onMute: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -103,7 +104,8 @@ fun CheckInForm(
     var muted by rememberSaveable { mutableStateOf(!settings.sound) }
     var kept by rememberSaveable { mutableStateOf<Boolean?>(null) }
     val plans by remember(date) { AppDatabase.get(context).entries().observePlans(date.toString()) }.collectAsState(initial = emptyList())
-    val plan = plans.firstOrNull { it.hour == hour }
+    // A session's name is its standing plan unless that day has its own plan.
+    val planGoal = plans.firstOrNull { it.hour == hour }?.goal ?: settings.defaultGoal(hour)
 
     fun importPhoto(uri: Uri) {
         busy = true
@@ -137,13 +139,13 @@ fun CheckInForm(
             chosen == null -> error = "Tag it: productivity or entertainment."
             chosen == Tag.PRODUCTIVITY && settings.photoForProductive && photoPath == null ->
                 error = "Productivity needs photo proof. Snap it or it didn't happen."
-            plan != null && kept == null -> error = "The plan said ${plan.goal}. Did you stick to it?"
+            planGoal != null && kept == null -> error = "The plan said $planGoal. Did you stick to it?"
             else -> {
                 busy = true
                 scope.launch {
                     AppDatabase.get(context).entries().insert(
                         Entry(date = date.toString(), hour = hour, createdAt = System.currentTimeMillis(), text = trimmed, tag = chosen, photoPath = photoPath,
-                            keptPlan = if (plan != null) kept else null),
+                            keptPlan = if (planGoal != null) kept else null),
                     )
                     Widgets.refresh(context)
                     val pending = Prefs.get(context).pending.value
@@ -172,17 +174,19 @@ fun CheckInForm(
             var blink by remember { mutableStateOf(true) }
             LaunchedEffect(Unit) { while (true) { delay(600); blink = !blink } }
             Text("● ALARM — CLOCK IN", style = Kicker.copy(color = if (blink) Lx.Blaze else Color.Transparent, fontSize = 12.sp))
-            Text("%02d:00".format(hour), style = display(88.sp, spacing = 0.02.em))
+            val session = settings.slotOf(hour)?.takeIf { settings.sessionMode }
+            Text(session?.let { "%02d–%02d".format(it.start, it.end) } ?: "%02d:00".format(hour), style = display(88.sp, spacing = 0.02.em))
+            session?.label?.takeIf { it.isNotBlank() }?.let { Text(it, style = display(30.sp, Lx.Volt)) }
             Text(line ?: "What are you doing right now? Snap it or type it.", style = display(26.sp, Lx.Text))
-            Text("The alarm stops when you submit.", color = Lx.Muted)
+            Text(if (onCancel == null) "The alarm stops when you submit." else "Log it now, or come back to it later.", color = Lx.Muted)
         } else {
             val day = if (date == LocalDate.now()) "TODAY" else date.format(DateTimeFormatter.ofPattern("EEE d MMM")).uppercase()
             Text("CHECK-IN · $day", style = Kicker.copy(color = Lx.Volt, fontSize = 12.sp))
             Text("LOG THE WORK", style = display(46.sp))
-            HourPicker(date, hour) { hour = it; kept = null }
+            HourPicker(date, hour, settings) { hour = it; kept = null }
         }
 
-        plan?.let { PlanCheck(it.goal, kept) { v -> kept = v; error = null } }
+        planGoal?.let { PlanCheck(it, kept) { v -> kept = v; error = null } }
 
         PhotoBox(
             photoPath = photoPath,
@@ -235,10 +239,9 @@ fun CheckInForm(
         error?.let { Text(it, color = Lx.Danger, fontWeight = FontWeight.SemiBold, fontSize = 13.sp) }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (alarm) {
-                LxButton(if (muted) "MUTED" else "MUTE", ghost = true) { muted = true; onMute() }
-            } else {
-                LxButton("CANCEL", ghost = true) { Photos.delete(photoPath); onCancel() }
+            when {
+                alarm && onCancel == null -> LxButton(if (muted) "MUTED" else "MUTE", ghost = true) { muted = true; onMute() }
+                else -> LxButton(if (alarm) "LATER" else "CANCEL", ghost = true) { Photos.delete(photoPath); onCancel?.invoke() }
             }
             LxButton("SUBMIT", modifier = Modifier.weight(1f), enabled = !busy) { submit() }
         }
@@ -272,13 +275,16 @@ private fun PlanCheck(goal: String, kept: Boolean?, onPick: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun HourPicker(date: LocalDate, selected: Int, onPick: (Int) -> Unit) {
+private fun HourPicker(date: LocalDate, selected: Int, settings: com.lifeline.app.data.Settings, onPick: (Int) -> Unit) {
     val maxHour = if (date == LocalDate.now()) LocalTime.now().hour else 23
-    val hours = remember(date, maxHour) { (0..maxHour).toList() }
+    // Session mode files a check-in under its session's start hour; only sessions that have begun can be logged.
+    val hours = remember(date, maxHour, settings) {
+        if (settings.sessionMode) settings.sessions.filter { it.start <= maxHour }.map { it.start } else (0..maxHour).toList()
+    }
     val state = rememberLazyListState()
     LaunchedEffect(Unit) { state.scrollToItem(maxOf(hours.indexOf(selected) - 2, 0)) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("HOUR", style = Kicker)
+        Text(if (settings.sessionMode) "SESSION" else "HOUR", style = Kicker)
         LazyRow(state = state, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(hours) { h ->
                 val on = h == selected
@@ -289,7 +295,7 @@ private fun HourPicker(date: LocalDate, selected: Int, onPick: (Int) -> Unit) {
                         .border(1.dp, if (on) Lx.Volt else Lx.Line, RoundedCornerShape(10.dp))
                         .clickable { onPick(h) }
                         .padding(horizontal = 14.dp, vertical = 10.dp),
-                ) { Text("%02d:00".format(h), style = display(20.sp, if (on) Lx.Ink else Lx.Text)) }
+                ) { Text(settings.slotLabel(h), style = display(20.sp, if (on) Lx.Ink else Lx.Text)) }
             }
         }
     }

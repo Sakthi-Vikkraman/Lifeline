@@ -38,7 +38,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.mutableStateOf
+import com.lifeline.app.alarm.AlarmNotifier
 import com.lifeline.app.alarm.AlarmScheduler
+import com.lifeline.app.data.AlarmStyle
 import com.lifeline.app.data.Prefs
 import com.lifeline.app.ui.theme.Kicker
 import com.lifeline.app.ui.theme.Lx
@@ -77,6 +81,7 @@ fun SettingsDialog(onDismiss: () -> Unit, onTestAlarm: () -> Unit) {
     val prefs = remember { Prefs.get(context) }
     val settings by prefs.settings.collectAsState()
     var refresh by remember { mutableIntStateOf(0) }
+    var editSessions by remember { mutableStateOf(false) }
     LifecycleResumeEffect(Unit) { refresh++; onPauseOrDispose { } }
     val checks = remember(refresh) { permissionChecks(context) }
 
@@ -98,9 +103,44 @@ fun SettingsDialog(onDismiss: () -> Unit, onTestAlarm: () -> Unit) {
         ) {
             Text("SETUP", style = display(36.sp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                HourStepper("ALARMS FROM", settings.startHour, Modifier.weight(1f)) { update(settings.copy(startHour = it)) }
-                HourStepper("UNTIL", settings.endHour, Modifier.weight(1f)) { update(settings.copy(endHour = it)) }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("CHECK-INS", style = Kicker)
+                Segmented(listOf("EVERY HOUR", "SESSIONS"), if (settings.sessionMode) 1 else 0) { i ->
+                    if (i == 0) update(settings.copy(sessions = emptyList())) else if (!settings.sessionMode) editSessions = true
+                }
+            }
+            if (settings.sessionMode) {
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Lx.Bg).border(1.dp, Lx.Line, RoundedCornerShape(12.dp)).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    settings.sessions.forEach { s ->
+                        Row {
+                            Text("%02d–%02d".format(s.start, s.end), style = display(18.sp), modifier = Modifier.width(64.dp))
+                            Text(s.label.ifBlank { "—" }, style = display(18.sp, Lx.Volt))
+                        }
+                    }
+                }
+                LxButton("EDIT SESSIONS", ghost = true, modifier = Modifier.fillMaxWidth()) { editSessions = true }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HourStepper("ALARMS FROM", settings.startHour, Modifier.weight(1f)) { update(settings.copy(startHour = it)) }
+                    HourStepper("UNTIL", settings.endHour, Modifier.weight(1f)) { update(settings.copy(endHour = it)) }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("CHECK-IN STYLE", style = Kicker)
+                Segmented(listOf("FULL-SCREEN ALARM", "NOTIFICATION"), settings.alarmStyle.ordinal) { i ->
+                    update(settings.copy(alarmStyle = AlarmStyle.entries[i]))
+                    // Re-post a waiting check-in in the new style.
+                    if (prefs.pending.value != null) AlarmNotifier.show(context)
+                }
+                Text(
+                    if (settings.alarmStyle == AlarmStyle.ALARM) "Takes over the screen and keeps ringing until you submit."
+                    else "A normal notification: one sound, swipe it away, log when you're ready. Unlogged hours still count as lost.",
+                    color = Lx.Muted, fontSize = 12.sp,
+                )
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -115,7 +155,7 @@ fun SettingsDialog(onDismiss: () -> Unit, onTestAlarm: () -> Unit) {
                 }
             }
 
-            SettingSwitch("Alarm sound", null, settings.sound) { update(settings.copy(sound = it)) }
+            if (settings.alarmStyle == AlarmStyle.ALARM) SettingSwitch("Alarm sound", null, settings.sound) { update(settings.copy(sound = it)) }
             SettingSwitch("Reward sounds", "Level-up sound for productive check-ins", settings.rewardSound) { update(settings.copy(rewardSound = it)) }
             SettingSwitch("Photo proof for productivity", "No typing \"studying\" from bed", settings.photoForProductive) {
                 update(settings.copy(photoForProductive = it))
@@ -135,16 +175,21 @@ fun SettingsDialog(onDismiss: () -> Unit, onTestAlarm: () -> Unit) {
                 }
             }
 
-            Text(
-                "Alarms ring at the top of every hour in your window and keep ringing until you submit a check-in.",
-                color = Lx.Muted, fontSize = 12.sp,
-            )
+            AlarmSwitchSection()
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 LxButton("TEST ALARM", ghost = true, modifier = Modifier.weight(1f)) { onTestAlarm() }
                 LxButton("DONE", modifier = Modifier.weight(1f)) { onDismiss() }
             }
         }
+    }
+
+    if (editSessions) {
+        SessionsDialog(
+            initial = settings.sessions,
+            onSave = { update(settings.copy(sessions = it)); editSessions = false },
+            onDismiss = { editSessions = false },
+        )
     }
 }
 

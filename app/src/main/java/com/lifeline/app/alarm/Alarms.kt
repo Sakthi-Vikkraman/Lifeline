@@ -14,6 +14,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.lifeline.app.Actions
 import com.lifeline.app.R
+import com.lifeline.app.data.AlarmStyle
 import com.lifeline.app.data.AppDatabase
 import com.lifeline.app.data.Coach
 import com.lifeline.app.data.PendingAlarm
@@ -43,11 +44,17 @@ private const val PLAN_LEAD_MINUTES = 30L
  * to plan the day [PLAN_LEAD_MINUTES] before the first alarm.
  */
 object AlarmScheduler {
+    /** The next top-of-hour check-in alarm, after any pause ends; null while alarms are off indefinitely. */
     fun nextTrigger(context: Context, from: LocalDateTime = LocalDateTime.now()): LocalDateTime? {
         val settings = Prefs.get(context).settings.value
-        var t = from.truncatedTo(ChronoUnit.HOURS).plusHours(1)
+        var start = from
+        settings.pauseAt(start.millis())?.let { pause ->
+            if (pause.forever) return null
+            start = maxOf(start, LocalDateTime.ofInstant(Instant.ofEpochMilli(pause.end - 1), ZoneId.systemDefault()))
+        }
+        var t = start.truncatedTo(ChronoUnit.HOURS).plusHours(1)
         repeat(24) {
-            if (settings.inWindow(t.hour)) return t
+            if (settings.slotRingingAt(t.hour) != null) return t
             t = t.plusHours(1)
         }
         return null
@@ -77,11 +84,16 @@ object AlarmScheduler {
 
     private fun schedulePlanReminder(context: Context, am: AlarmManager) {
         am.cancel(receiverIntent(context, ACTION_PLAN_REMINDER, 0L))
-        val start = Prefs.get(context).settings.value.startHour
+        val settings = Prefs.get(context).settings.value
         val now = LocalDateTime.now()
-        var at = now.toLocalDate().atTime(start, 0).minusMinutes(PLAN_LEAD_MINUTES)
+        var at = now.toLocalDate().atTime(settings.dayStart, 0).minusMinutes(PLAN_LEAD_MINUTES)
         if (at <= now) at = at.plusDays(1)
-        val millis = at.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        // No plan nagging on rest days.
+        while (settings.pauseAt(at.millis()) != null) {
+            if (settings.pauseAt(at.millis())!!.forever) return
+            at = at.plusDays(1)
+        }
+        val millis = at.millis()
         val op = receiverIntent(context, ACTION_PLAN_REMINDER, millis)
         if (canExact(am)) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, millis, op)
         else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, millis, op)
@@ -99,6 +111,13 @@ object AlarmScheduler {
     suspend fun coachLine(context: Context, date: LocalDate, hour: Int): String =
         Coach.alarmLine(Repo.day(context, date), hour, Prefs.get(context).settings.value)
 
+    /**
+     * The day a check-in ringing at [time] belongs to. Sessions ring as they end, so one ending at
+     * midnight belongs to the day before.
+     */
+    fun slotDate(settings: com.lifeline.app.data.Settings, time: LocalDateTime): LocalDate =
+        if (settings.sessionMode) time.minusHours(1).toLocalDate() else time.toLocalDate()
+
     /** Raise the alarm for [date]/[hour]: mark it pending and post the ringing notification. */
     fun raise(context: Context, date: String, hour: Int, line: String?) {
         Prefs.get(context).setPending(PendingAlarm(date, hour, line))
@@ -112,7 +131,29 @@ object AlarmScheduler {
         AlarmNotifier.cancel(context)
         Widgets.refresh(context)
     }
+
+    /**
+     * Switch every alarm and coach notification off until [until] ([Pause.FOREVER] = until turned back on).
+     * A ringing alarm stops too; its hour counts as paused, not missed.
+     */
+    fun stop(context: Context, until: Long) {
+        val prefs = Prefs.get(context)
+        prefs.pause(until)
+        prefs.setPending(null)
+        AlarmNotifier.cancel(context)
+        listOf(CoachNotifier.PLAN, CoachNotifier.WARNING, CoachNotifier.REVIEW).forEach { CoachNotifier.cancel(context, it) }
+        scheduleNext(context)
+        Widgets.refresh(context)
+    }
+
+    fun restart(context: Context) {
+        Prefs.get(context).resume()
+        scheduleNext(context)
+        Widgets.refresh(context)
+    }
 }
+
+private fun LocalDateTime.millis() = atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -123,6 +164,7 @@ class AlarmReceiver : BroadcastReceiver() {
                 AlarmScheduler.scheduleNext(app)
                 val at = intent.getLongExtra(EXTRA_TRIGGER_AT, 0L).takeIf { it > 0 } ?: System.currentTimeMillis()
                 val time = LocalDateTime.ofInstant(Instant.ofEpochMilli(at), ZoneId.systemDefault())
+                if (Prefs.get(app).settings.value.pauseAt(at) != null) return@launch // alarms are off
                 if (intent.action == ACTION_PLAN_REMINDER) planReminder(app, time) else hourly(app, time)
             } finally {
                 Widgets.refresh(app) // the hour rolled over: NOW / missed markers move
@@ -134,34 +176,35 @@ class AlarmReceiver : BroadcastReceiver() {
     private suspend fun planReminder(app: Context, time: LocalDateTime) {
         val day = time.plusMinutes(PLAN_LEAD_MINUTES).toLocalDate()
         if (AppDatabase.get(app).entries().plansOn(day.toString()).isEmpty()) {
-            CoachNotifier.post(app, CoachNotifier.PLAN, "PLAN YOUR DAY", "First alarm in 30 minutes. Give every hour a job.", Actions.PLAN)
+            CoachNotifier.post(app, CoachNotifier.PLAN, "PLAN YOUR DAY", "Your day starts in 30 minutes. Give every hour a job.", Actions.PLAN)
         }
     }
 
     private suspend fun hourly(app: Context, time: LocalDateTime) {
         val prefs = Prefs.get(app)
         val settings = prefs.settings.value
-        val today = time.toLocalDate()
+        val slot = settings.slotRingingAt(time.hour) ?: return
+        val today = AlarmScheduler.slotDate(settings, time)
         val date = today.toString()
         val dao = AppDatabase.get(app).entries()
-        if (!settings.inWindow(time.hour)) return
 
-        // Skip the alarm if this hour was already logged manually.
-        val raised = dao.countForHour(date, time.hour) == 0
-        if (raised) AlarmScheduler.raise(app, date, time.hour, AlarmScheduler.coachLine(app, today, time.hour))
+        // Skip the alarm if this hour (or session) was already logged manually.
+        val raised = dao.countForHours(date, slot.start, slot.end) == 0
+        if (raised) AlarmScheduler.raise(app, date, slot.start, AlarmScheduler.coachLine(app, today, slot.start))
 
-        val hours = settings.activeHours()
+        val slots = settings.slots()
+        val index = slots.indexOf(slot)
         val summary = Repo.day(app, today)
 
-        // Streak protection: three hours before the last alarm, warn if the day is being lost.
-        val evening = hours[(hours.size - 4).coerceAtLeast(0)]
-        if (time.hour == evening && prefs.once("warn.$date")) {
+        // Streak protection: three hours (or one session) before the last alarm, warn if the day is being lost.
+        val warnAt = if (settings.sessionMode) slots.size - 2 else (slots.size - 4).coerceAtLeast(0)
+        if (index == warnAt && prefs.once("warn.$date")) {
             Coach.streakWarning(summary, settings)?.let {
                 CoachNotifier.post(app, CoachNotifier.WARNING, "STREAK IN DANGER", it, Actions.LOG)
             }
         }
 
-        if (time.hour == hours.last()) {
+        if (index == slots.lastIndex) {
             // Night review: if the alarm rang, the alarm screen asks for it after the check-in.
             if (!raised && dao.reviewOn(date) == null) {
                 CoachNotifier.post(app, CoachNotifier.REVIEW, "NIGHT REVIEW", "Two minutes: one win, one fail, one fix for tomorrow.", Actions.REVIEW)
@@ -190,6 +233,7 @@ class BootReceiver : BroadcastReceiver() {
 object AlarmNotifier {
     private const val CHANNEL_LOUD = "checkin_alarm"
     private const val CHANNEL_SILENT = "checkin_silent"
+    private const val CHANNEL_NOTIFY = "checkin_notify"
     private const val NOTIFICATION_ID = 42
 
     fun createChannels(context: Context) {
@@ -211,25 +255,52 @@ object AlarmNotifier {
             enableVibration(true)
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
+        val notify = NotificationChannel(CHANNEL_NOTIFY, "Hourly check-in (notification only)", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "A normal check-in reminder, used when the full-screen alarm is turned off"
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
         val coach = NotificationChannel(CoachNotifier.CHANNEL, "Coach", NotificationManager.IMPORTANCE_HIGH).apply {
             description = "Morning plan reminder, streak warnings, night review and the weekly report card"
         }
-        nm.createNotificationChannels(listOf(loud, silent, coach))
+        nm.createNotificationChannels(listOf(loud, silent, notify, coach))
     }
 
-    /** Posts the ongoing alarm notification. [muted] swaps to the silent channel without clearing the alarm. */
+    /**
+     * Posts the ongoing alarm notification. [muted] swaps to the silent channel without clearing the alarm.
+     * In [AlarmStyle.NOTIFICATION] style it's an ordinary notification instead: one sound, swipeable.
+     */
     fun show(context: Context, muted: Boolean = false) {
         val pending = Prefs.get(context).pending.value ?: return
         val nm = context.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 33 && !nm.areNotificationsEnabled()) return
 
-        val loud = !muted && Prefs.get(context).settings.value.sound
+        val settings = Prefs.get(context).settings.value
         val alarmIntent = PendingIntent.getActivity(
             context, 2,
             Intent(context, AlarmActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val hourLabel = "%02d:00".format(pending.hour)
+        val hourLabel = settings.slotLabel(pending.hour)
+        if (settings.alarmStyle == AlarmStyle.NOTIFICATION) {
+            nm.notify(
+                NOTIFICATION_ID,
+                NotificationCompat.Builder(context, CHANNEL_NOTIFY)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setColor(0xFFC8FF00.toInt())
+                    .setContentTitle("$hourLabel — CHECK IN")
+                    .setContentText(pending.line ?: "What are you doing right now? Tap to log it.")
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(pending.line ?: "What are you doing right now? Tap to log it."))
+                    .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setOnlyAlertOnce(muted)
+                    .setAutoCancel(true)
+                    .setContentIntent(alarmIntent)
+                    .build(),
+            )
+            return
+        }
+
+        val loud = !muted && settings.sound
         val notification = NotificationCompat.Builder(context, if (loud) CHANNEL_LOUD else CHANNEL_SILENT)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(0xFFC8FF00.toInt())
